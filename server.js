@@ -19,6 +19,7 @@ const axios = require("axios");
 require("dotenv").config();
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const ASTROLABE_API_KEY = (process.env.ASTROLABE_API_KEY || "").trim();
 const PORT = Number(process.env.PORT) || 3000;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -42,6 +43,27 @@ const pricePer1M = {
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
+
+function extractInboundApiKey(req) {
+  const authHeader = String(req.headers.authorization || "");
+  if (authHeader.toLowerCase().startsWith("bearer ")) return authHeader.slice(7).trim();
+  const xApiKey = String(req.headers["x-api-key"] || "").trim();
+  return xApiKey;
+}
+
+app.use((req, res, next) => {
+  // If ASTROLABE_API_KEY is configured, every request must send it.
+  if (!ASTROLABE_API_KEY) return next();
+  const inboundKey = extractInboundApiKey(req);
+  if (inboundKey === ASTROLABE_API_KEY) return next();
+  return res.status(401).json({
+    error: {
+      message: "Unauthorized. Missing or invalid API key.",
+      type: "authentication_error",
+      code: "invalid_api_key"
+    }
+  });
+});
 
 function safeText(value) {
   if (typeof value === "string") return value;
@@ -299,5 +321,8 @@ app.post("/v1/chat/completions", async (req, res) => {
 });
 
 app.listen(PORT, () => {
+  if (!ASTROLABE_API_KEY) {
+    console.warn("Warning: ASTROLABE_API_KEY is not set. Your public endpoint is unauthenticated.");
+  }
   console.log(`Astrolabe listening on port ${PORT}`);
 });

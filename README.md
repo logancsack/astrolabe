@@ -46,6 +46,7 @@ Copy `.env.example` to `.env` and set your key:
 
 ```env
 OPENROUTER_API_KEY=your_real_key_here
+ASTROLABE_API_KEY=your_long_random_proxy_secret
 PORT=3000
 ```
 
@@ -75,6 +76,7 @@ Server will listen on `http://localhost:3000`.
 ```bash
 curl -X POST http://localhost:3000/v1/chat/completions ^
   -H "Content-Type: application/json" ^
+  -H "Authorization: Bearer your_long_random_proxy_secret" ^
   -d "{\"model\":\"ignored-by-astrolabe\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one line.\"}]}"
 ```
 
@@ -83,6 +85,7 @@ Note: `model` in request is accepted, but Astrolabe overrides it with the select
 ## Connect OpenClaw to Astrolabe
 
 Point OpenClaw's OpenAI-compatible base URL to your Astrolabe host.
+Set OpenClaw's API key to the exact same value as `ASTROLABE_API_KEY` so Astrolabe accepts the request.
 
 Example:
 1. Before: `https://openrouter.ai/api/v1`
@@ -100,6 +103,7 @@ OpenClaw should continue using standard `chat/completions` without code changes.
 5. If your repo has multiple projects, set Root Directory to `Astrolabe`.
 6. Add environment variable:
    - `OPENROUTER_API_KEY=...`
+   - `ASTROLABE_API_KEY=...` (long random secret)
 7. Deploy.
 8. Railway will detect Node.js automatically and run `npm start`.
 9. Copy your public URL and use it as OpenClaw's base URL.
@@ -118,6 +122,17 @@ Add a screenshot named `example-logs.png` in the repo root to show routing and o
 2. Input: OpenAI-compatible chat completion payload.
 3. Output: OpenRouter response passthrough (`id`, `object`, `created`, `choices`, `usage`, etc).
 4. Streaming: not supported in MVP. `stream: true` returns HTTP 400.
+5. Authentication: set `ASTROLABE_API_KEY` to require `Authorization: Bearer <key>` (or `x-api-key`).
+
+## Security for public deployments
+
+If your Railway URL is public, set `ASTROLABE_API_KEY` so random users cannot spend your OpenRouter balance.
+
+Minimum secure setup:
+1. Generate a long random string for `ASTROLABE_API_KEY`.
+2. Add it as a Railway environment variable.
+3. Put the same string into OpenClaw's API key field.
+4. Rotate your OpenRouter key if you ever exposed it.
 
 ## Logs and observability
 
