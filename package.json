@@ -1,0 +1,17 @@
+{
+  "name": "astrolabe",
+  "version": "1.0.0",
+  "description": "Headless OpenAI-compatible proxy that routes OpenClaw traffic to the cheapest effective OpenRouter model.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "axios": "^1.12.2",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0"
+  }
+}
