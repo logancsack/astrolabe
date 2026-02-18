@@ -1,5 +1,11 @@
 # Astrolabe
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
+![OpenRouter](https://img.shields.io/badge/uses-OpenRouter-orange)
+
+**Smart model routing for OpenClaw - 70-95% cheaper without losing quality.**
+
 Astrolabe is a headless OpenAI-compatible proxy server for OpenClaw agents.
 
 It sits between OpenClaw and OpenRouter, then auto-routes each request to the cheapest effective model tier. This usually cuts agent costs by **70-95%** for always-on workloads while still escalating difficult tasks to premium models when needed.
@@ -31,7 +37,7 @@ Install the latest LTS from https://nodejs.org (Node 20+ recommended).
 
 ## 2) Open terminal and install dependencies
 ```bash
-cd Astrolabe
+cd astrolabe
 npm install
 ```
 
@@ -90,12 +96,21 @@ OpenClaw should continue using standard `chat/completions` without code changes.
 1. Push `Astrolabe/` to a GitHub repo (or keep it in a monorepo).
 2. Go to https://railway.app and create a new project.
 3. Choose Deploy from GitHub and select your repo.
-4. Set Root Directory to `Astrolabe` if needed.
-5. Add environment variable:
+4. Railway usually auto-detects the root for this project.
+5. If your repo has multiple projects, set Root Directory to `Astrolabe`.
+6. Add environment variable:
    - `OPENROUTER_API_KEY=...`
-6. Deploy.
-7. Railway will detect Node.js automatically and run `npm start`.
-8. Copy your public URL and use it as OpenClaw's base URL.
+7. Deploy.
+8. Railway will detect Node.js automatically and run `npm start`.
+9. Copy your public URL and use it as OpenClaw's base URL.
+
+## Example logs screenshot
+
+Add a screenshot named `example-logs.png` in the repo root to show routing and occasional escalation, then reference it like this:
+
+```md
+![Astrolabe routing logs](./example-logs.png)
+```
 
 ## API behavior and compatibility
 
