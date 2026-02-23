@@ -1,16 +1,11 @@
-<svg width="188" height="32" viewBox="0 0 188 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="astrolabeRingDark" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#8CB4FF"/>
-      <stop offset="1" stop-color="#4D8DFF"/>
-    </linearGradient>
-  </defs>
-
-  <circle cx="16" cy="16" r="11" stroke="url(#astrolabeRingDark)" stroke-width="2.5"/>
-  <path d="M8 20C10.4 13.6 13.2 11 16 11C18.8 11 21.6 13.6 24 20" stroke="#6EA0FF" stroke-width="1.7" stroke-linecap="round"/>
-  <circle cx="16" cy="16" r="3" fill="#6EA0FF"/>
-  <line x1="16" y1="5" x2="16" y2="27" stroke="#6EA0FF" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="5" y1="16" x2="27" y2="16" stroke="#6EA0FF" stroke-width="1.5" stroke-linecap="round"/>
-
-  <text x="40" y="21.5" fill="#F8FAFF" font-family="Geist, Inter, Segoe UI, sans-serif" font-size="20" font-weight="650" letter-spacing="0.2">Astrolabe</text>
+<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="50" cy="50" r="42" stroke="#334155" stroke-width="3" />
+  <path d="M 50 4 L 50 12 M 50 88 L 50 96 M 4 50 L 12 50 M 88 50 L 96 50" stroke="#475569" stroke-width="3" stroke-linecap="round" />
+  <path d="M 50 30 L 24 80" stroke="#F8F9FA" stroke-width="8" stroke-linecap="round" />
+  <path d="M 34.5 60 L 65.5 60" stroke="#F8F9FA" stroke-width="8" stroke-linecap="round" />
+  <circle cx="24" cy="80" r="6" fill="#F8F9FA" />
+  <path d="M 50 14 L 50 30 L 76 80" stroke="#3B82F6" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="50" cy="14" r="6" fill="#3B82F6" />
+  <circle cx="76" cy="80" r="8" fill="#3B82F6" />
+  <circle cx="76" cy="80" r="3" fill="#0F172A" />
 </svg>
