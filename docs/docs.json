@@ -4,9 +4,25 @@
   "name": "Astrolabe",
   "description": "Smart model routing for OpenClaw with OpenRouter.",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0055FF",
+    "light": "#4D8DFF",
+    "dark": "#0042CC"
+  },
+  "background": {
+    "color": {
+      "light": "#F8F9FA"
+    }
+  },
+  "fonts": {
+    "family": "Inter",
+    "body": {
+      "family": "Inter",
+      "weight": 400
+    },
+    "heading": {
+      "family": "Geist",
+      "weight": 600
+    }
   },
   "favicon": "/favicon.svg",
   "navigation": {
