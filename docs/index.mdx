@@ -1,0 +1,55 @@
+---
+title: "Astrolabe Docs"
+description: "OpenAI-compatible cost routing for OpenClaw using OpenRouter."
+---
+
+Astrolabe is a headless OpenAI-compatible proxy for OpenClaw agents.
+
+It classifies each request, routes it to the cheapest effective model tier, and can escalate when confidence is low.
+
+<Card
+  title="Quickstart"
+  icon="rocket"
+  href="/quickstart"
+  horizontal
+>
+  Install and run Astrolabe locally in a few minutes.
+</Card>
+
+## What Astrolabe does
+
+1. Classifies incoming chat requests with a low-cost model.
+2. Routes trivial and moderate tasks to lower-cost tiers.
+3. Escalates difficult requests to a premium tier when needed.
+4. Preserves OpenAI-compatible request and response format.
+
+<Columns cols={2}>
+  <Card
+    title="Connect OpenClaw"
+    icon="plug"
+    href="/openclaw"
+  >
+    Point OpenClaw at Astrolabe with no client code changes.
+  </Card>
+  <Card
+    title="Deploy to Railway"
+    icon="cloud-arrow-up"
+    href="/deploy/railway"
+  >
+    Ship a hosted endpoint for always-on agents.
+  </Card>
+  <Card
+    title="Configuration"
+    icon="sliders"
+    href="/configuration"
+  >
+    Tune model tiers, pricing tables, and routing behavior.
+  </Card>
+  <Card
+    title="API Reference"
+    icon="terminal"
+    href="/api-reference/introduction"
+  >
+    Endpoint details for `/v1/chat/completions`.
+  </Card>
+</Columns>

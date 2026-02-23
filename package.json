@@ -4,7 +4,8 @@
   "description": "Headless OpenAI-compatible proxy that routes OpenClaw traffic to the cheapest effective OpenRouter model.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "docs:dev": "cd docs && npx mint dev"
   },
   "engines": {
     "node": ">=20"

@@ -1,0 +1,27 @@
+---
+title: "Connect OpenClaw"
+description: "Use Astrolabe as OpenClaw's OpenAI-compatible base URL."
+---
+
+## Update your OpenClaw endpoint
+
+1. Set OpenClaw's base URL to your Astrolabe host.
+2. Keep using OpenAI-compatible `chat/completions` requests.
+3. Set OpenClaw's API key to the same value as `ASTROLABE_API_KEY`.
+
+### Base URL examples
+
+1. Before: `https://openrouter.ai/api/v1`
+2. Local Astrolabe: `http://localhost:3000/v1`
+3. Railway Astrolabe: `https://your-app-name.up.railway.app/v1`
+
+## Compatibility notes
+
+- Endpoint: `POST /v1/chat/completions`
+- Request body: OpenAI-compatible chat completion payload
+- Response body: OpenRouter passthrough shape (`id`, `choices`, `usage`, etc.)
+- Streaming: enabled by default unless you send `stream: false`
+
+<Info>
+Set `ASTROLABE_API_KEY` in production. If it is empty, your public endpoint is unauthenticated.
+</Info>

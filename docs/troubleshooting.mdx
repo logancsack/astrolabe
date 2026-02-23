@@ -1,0 +1,37 @@
+---
+title: "Troubleshooting"
+description: "Common errors and production checks."
+---
+
+## `Missing OPENROUTER_API_KEY`
+
+Cause: `OPENROUTER_API_KEY` was not set.
+
+Fix: add it to `.env` or your deployment env vars, then restart.
+
+## 401 unauthorized
+
+Cause: incoming key does not match `ASTROLABE_API_KEY`.
+
+Fix: send `Authorization: Bearer <your_astrolabe_key>` (or `x-api-key`).
+
+## Need full JSON instead of SSE
+
+Cause: streaming is default behavior.
+
+Fix: send `"stream": false` in the request body.
+
+## Upstream OpenRouter errors
+
+Check:
+
+1. Key validity and credits
+2. Model availability
+3. Request payload shape
+4. OpenRouter service status
+
+## `est_usd=n/a` in logs
+
+Cause: upstream usage fields were omitted.
+
+Fix: this is expected for some providers/responses; cost estimation requires token usage.

@@ -1,0 +1,22 @@
+---
+title: "Deploy to Railway"
+description: "Host Astrolabe in production in a few minutes."
+---
+
+## Steps
+
+1. Push `Astrolabe/` to GitHub (standalone repo or monorepo).
+2. In [Railway](https://railway.app), create a new project from GitHub.
+3. If monorepo, set **Root Directory** to `Astrolabe`.
+4. Add environment variables:
+   - `OPENROUTER_API_KEY=...`
+   - `ASTROLABE_API_KEY=...` (long random secret)
+   - `PORT=3000` (optional)
+5. Deploy and copy your public URL.
+6. Point OpenClaw to `https://your-app-name.up.railway.app/v1`.
+
+## Security checklist
+
+1. Keep `OPENROUTER_API_KEY` private.
+2. Always set `ASTROLABE_API_KEY` on public deployments.
+3. Rotate keys immediately if leaked.

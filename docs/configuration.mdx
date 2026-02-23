@@ -1,0 +1,48 @@
+---
+title: "Configuration"
+description: "Customize model routing, self-check behavior, and price estimates."
+---
+
+Most Astrolabe behavior is configured directly in `server.js`.
+
+## Model tiers
+
+```js
+const tierModels = {
+  TIER0: "openai/gpt-5-nano",
+  TIER1: "x-ai/grok-4.1-fast",
+  TIER2: "anthropic/claude-opus-4.6"
+};
+```
+
+- `TIER0`: classifier + self-check model
+- `TIER1`: default serving tier
+- `TIER2`: premium fallback tier
+
+## Cost estimation table
+
+```js
+const pricePer1M = {
+  "openai/gpt-5-nano": { input: 0.05, output: 0.4 },
+  "x-ai/grok-4.1-fast": { input: 0.2, output: 0.5 },
+  "anthropic/claude-opus-4.6": { input: 15, output: 75 }
+};
+```
+
+Update this as provider pricing changes.
+
+## Routing and escalation
+
+1. `classifyTier(...)` selects `TIER0`, `TIER1`, or `TIER2`.
+2. Streaming requests are routed once and passed through.
+3. Non-streaming requests run `runSelfCheck(...)`.
+4. If self-check confidence is low, Astrolabe retries once on `TIER2`.
+
+## Optional upstream metadata
+
+Set these env vars if you want OpenRouter attribution headers:
+
+```bash
+OPENROUTER_SITE_URL=https://your-site.example
+OPENROUTER_APP_NAME=Astrolabe
+```
