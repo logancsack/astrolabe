@@ -136,6 +136,25 @@ function makeOpenRouterHeaders() {
   return headers;
 }
 
+function tryParseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function streamToText(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+    });
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    stream.on("error", reject);
+  });
+}
+
 async function callOpenRouter(payload) {
   try {
     const response = await axios.post(OPENROUTER_URL, payload, {
@@ -153,6 +172,37 @@ async function callOpenRouter(payload) {
     error.status = response.status;
     error.code = response.data?.error?.code;
     error.upstream = response.data;
+    throw error;
+  } catch (error) {
+    if (error.status) throw error;
+    const networkError = new Error(`OpenRouter network error: ${error.message}`);
+    networkError.status = 502;
+    networkError.upstream = { error: { message: networkError.message } };
+    throw networkError;
+  }
+}
+
+async function callOpenRouterStream(payload) {
+  try {
+    const response = await axios.post(OPENROUTER_URL, payload, {
+      headers: makeOpenRouterHeaders(),
+      timeout: 0,
+      responseType: "stream",
+      validateStatus: () => true
+    });
+    if (response.status >= 200 && response.status < 300) return response;
+
+    const rawBody = await streamToText(response.data);
+    const parsed = tryParseJson(rawBody);
+    const message =
+      parsed?.error?.message ||
+      parsed?.message ||
+      rawBody ||
+      `OpenRouter request failed with status ${response.status}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.code = parsed?.error?.code;
+    error.upstream = parsed || { error: { message } };
     throw error;
   } catch (error) {
     if (error.status) throw error;
@@ -267,10 +317,7 @@ app.post("/v1/chat/completions", async (req, res) => {
     if (!body || !Array.isArray(body.messages)) {
       return res.status(400).json({ error: { message: "Invalid request: 'messages' array is required.", type: "invalid_request_error" } });
     }
-    if (body.stream === true) {
-      // TODO: Add streaming proxy support in a future release.
-      return res.status(400).json({ error: { message: "Streaming is not supported in Astrolabe MVP. Send stream=false.", type: "invalid_request_error" } });
-    }
+    const streamRequested = body.stream !== false;
 
     const lastUserMessage = extractLastUserMessage(body.messages);
     const recentContext = buildRecentContext(body.messages);
@@ -279,7 +326,43 @@ app.post("/v1/chat/completions", async (req, res) => {
     classifierReason = classified.reason;
     chosenModel = tierModels[tier] || tierModels.TIER1;
 
-    let finalResponse = await callOpenRouter({ ...body, model: chosenModel });
+    if (streamRequested) {
+      const upstream = await callOpenRouterStream({ ...body, model: chosenModel, stream: true });
+      const upstreamStream = upstream.data;
+      const latency = Date.now() - startedAt;
+      console.log(
+        `[${requestId}] tier=${tier} chosen_model=${chosenModel} final_model=${chosenModel} reason="${classifierReason}" ` +
+          `selfcheck=skipped self_reason="Streaming mode" escalated=false ` +
+          `tokens=n/a/n/a/n/a est_usd=n/a latency_ms=${latency} stream=true`
+      );
+
+      res.status(200);
+      res.setHeader("Content-Type", upstream.headers["content-type"] || "text/event-stream; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+      req.on("close", () => {
+        if (typeof upstreamStream.destroy === "function") upstreamStream.destroy();
+      });
+      upstreamStream.on("error", (streamErr) => {
+        const streamMessage = streamErr?.message || "OpenRouter stream error";
+        console.error(
+          `[${requestId}] error status=502 tier=${tier} model=${chosenModel} reason="${classifierReason}" ` +
+            `message="${streamMessage}" latency_ms=${Date.now() - startedAt}`
+        );
+        if (!res.headersSent) {
+          res.status(502).json(buildErrorBody(502, streamErr));
+          return;
+        }
+        res.end();
+      });
+      upstreamStream.pipe(res);
+      return;
+    }
+
+    let finalResponse = await callOpenRouter({ ...body, model: chosenModel, stream: false });
     let finalModel = chosenModel;
     let escalated = false;
     const firstAnswer = safeText(finalResponse?.choices?.[0]?.message?.content);
@@ -288,7 +371,7 @@ app.post("/v1/chat/completions", async (req, res) => {
     if (!selfCheck.confident && chosenModel !== tierModels.TIER2) {
       escalated = true;
       finalModel = tierModels.TIER2;
-      finalResponse = await callOpenRouter({ ...body, model: finalModel });
+      finalResponse = await callOpenRouter({ ...body, model: finalModel, stream: false });
     }
 
     if (!finalResponse || !Array.isArray(finalResponse.choices)) {

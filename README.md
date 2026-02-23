@@ -121,8 +121,9 @@ Add a screenshot named `example-logs.png` in the repo root to show routing and o
 1. Endpoint: `POST /v1/chat/completions`
 2. Input: OpenAI-compatible chat completion payload.
 3. Output: OpenRouter response passthrough (`id`, `object`, `created`, `choices`, `usage`, etc).
-4. Streaming: not supported in MVP. `stream: true` returns HTTP 400.
-5. Authentication: set `ASTROLABE_API_KEY` to require `Authorization: Bearer <key>` (or `x-api-key`).
+4. Streaming: supported. If `stream` is omitted, Astrolabe defaults to `stream: true`.
+5. Non-stream mode: send `stream: false` to use full JSON responses and Astrolabe's self-check/escalation step.
+6. Authentication: set `ASTROLABE_API_KEY` to require `Authorization: Bearer <key>` (or `x-api-key`).
 
 ## Security for public deployments
 
@@ -167,8 +168,8 @@ Typical persistent-agent savings are **70-95%**, depending on:
 
 1. `Missing OPENROUTER_API_KEY`
    - Add key to `.env` and restart.
-2. `Streaming is not supported`
-   - Send `stream: false` or omit `stream`.
+2. Need non-stream JSON output
+   - Send `stream: false` explicitly.
 3. Upstream errors from OpenRouter
    - Check key validity, credits, model availability, and request format.
 4. `est_usd=n/a`
