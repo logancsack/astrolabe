@@ -45,4 +45,6 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 <Note>
 `model` is accepted for compatibility but Astrolabe overrides it with the selected routed model.
+Default behavior is budget-first routing with strict cost-efficiency guardrails.
+For mode selection and full env variable behavior, see `/configuration`.
 </Note>

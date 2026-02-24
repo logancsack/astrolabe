@@ -114,6 +114,7 @@ test("GET /health returns service metadata", async () => {
     assert.equal(response.body.ok, true);
     assert.equal(response.body.service, "astrolabe");
     assert.equal(response.body.version, "0.2.0-beta.1");
+    assert.equal(response.body.cost_efficiency_mode, "strict");
   } finally {
     server.close();
   }

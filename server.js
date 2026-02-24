@@ -16,13 +16,23 @@ const ASTROLABE_API_KEY = (process.env.ASTROLABE_API_KEY || "").trim();
 const PORT = Number(process.env.PORT) || 3000;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-const ROUTING_PROFILE = String(process.env.ASTROLABE_ROUTING_PROFILE || "balanced")
-  .trim()
-  .toLowerCase();
+const ROUTING_PROFILE = normalizeRoutingProfile(
+  String(process.env.ASTROLABE_ROUTING_PROFILE || "budget")
+    .trim()
+    .toLowerCase()
+);
+const COST_EFFICIENCY_MODE = normalizeCostMode(
+  String(process.env.ASTROLABE_COST_EFFICIENCY_MODE || "strict")
+    .trim()
+    .toLowerCase()
+);
+const ALLOW_DIRECT_PREMIUM_MODELS = envFlag("ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS", false);
 const ENABLE_SAFETY_GATE = envFlag("ASTROLABE_ENABLE_SAFETY_GATE", true);
-const HIGH_STAKES_CONFIRM_MODE = String(process.env.ASTROLABE_HIGH_STAKES_CONFIRM_MODE || "prompt")
-  .trim()
-  .toLowerCase();
+const HIGH_STAKES_CONFIRM_MODE = normalizeHighStakesConfirmMode(
+  String(process.env.ASTROLABE_HIGH_STAKES_CONFIRM_MODE || "prompt")
+    .trim()
+    .toLowerCase()
+);
 const HIGH_STAKES_CONFIRM_TOKEN =
   String(process.env.ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN || "confirm")
     .trim()
@@ -186,12 +196,12 @@ const COMPLEXITY_ORDER = ["simple", "standard", "complex", "critical"];
 
 const MODEL_FALLBACKS = {
   nano: ["gemFlash", "grok"],
-  dsCoder: ["grok", "sonnet"],
-  gemFlash: ["grok", "sonnet"],
-  grok: ["sonnet", "opus"],
-  gem31Pro: ["sonnet", "opus"],
-  sonnet: ["opus"],
-  opus: []
+  dsCoder: ["gemFlash", "grok", "sonnet"],
+  gemFlash: ["nano", "grok", "sonnet"],
+  grok: ["gemFlash", "nano", "sonnet"],
+  gem31Pro: ["sonnet", "grok", "opus"],
+  sonnet: ["grok", "gem31Pro", "opus"],
+  opus: ["sonnet"]
 };
 
 const ESCALATION_PATH = {
@@ -216,6 +226,10 @@ const HIGH_STAKES_SYNONYMS = [
   "driver license",
   "tax return"
 ];
+const HIGH_STAKES_WEAK_SIGNALS = new Set(["invoice", "contract", "legal", "health", "sensitive"]);
+
+const ONBOARDING_CHAT_REGEX = /\b(name|call me|my name is|nickname|introduce|introduction|setup|set up|persona|profile|roleplay|character|identity|who are you)\b/i;
+const CASUAL_CHAT_REGEX = /\b(hello|hi|hey|thanks|thank you|good morning|good evening|nice to meet|how are you)\b/i;
 
 const HIGH_STAKES_POLICY_PROMPT = [
   "[ASTROLABE_HIGH_STAKES_POLICY]",
@@ -231,8 +245,11 @@ const CLASSIFIER_PROMPT = [
   'Allowed complexity values: "simple","standard","complex","critical".',
   "confidence must be an integer 1-5.",
   "matched_signals must be an array of short strings.",
-  "high_stakes must be true if the request touches payments, legal docs, passwords, PII, health, or irreversible actions.",
+  "Set high_stakes=true only for sensitive personal data, financial/legal actions, password/PII handling, or irreversible operations.",
+  "Do not mark high_stakes for generic discussion, brainstorming, or educational talk about legal or health topics.",
   "Choose the cheapest safe route target: avoid over-routing to expensive categories unless justified.",
+  "For onboarding chat, naming, introductions, persona setup, or casual social conversation, prefer communication/simple.",
+  "Do not choose core_loop unless there are explicit tool-use, function-call, or orchestration signals.",
   "Complexity rubric:",
   "- simple: short routine request with low ambiguity",
   "- standard: moderate context, normal reasoning",
@@ -256,6 +273,24 @@ function envFlag(name, defaultValue = false) {
   const raw = process.env[name];
   if (raw == null || raw === "") return defaultValue;
   return ["1", "true", "yes", "on"].includes(String(raw).trim().toLowerCase());
+}
+
+function normalizeCostMode(mode) {
+  if (mode === "off") return "off";
+  if (mode === "balanced") return "balanced";
+  return "strict";
+}
+
+function normalizeRoutingProfile(profile) {
+  if (profile === "quality") return "quality";
+  if (profile === "balanced") return "balanced";
+  return "budget";
+}
+
+function normalizeHighStakesConfirmMode(mode) {
+  if (mode === "off") return "off";
+  if (mode === "strict") return "strict";
+  return "prompt";
 }
 
 function clampInt(value, fallback, min, max) {
@@ -560,10 +595,13 @@ function detectSafetyGate(text) {
     new RegExp(`\\b${escapeRegex(signal)}\\b`, "i").test(text)
   );
   const actionLike = HIGH_STAKES_ACTION_REGEX.test(text);
+  const strongMatches = baseMatches.filter((signal) => !HIGH_STAKES_WEAK_SIGNALS.has(signal));
+  const weakMatches = baseMatches.filter((signal) => HIGH_STAKES_WEAK_SIGNALS.has(signal));
   const matchedSignals = dedupe([...baseMatches, ...synonymMatches]);
+  const weakOnlyTriggered = weakMatches.length >= 2;
 
   return {
-    triggered: matchedSignals.length > 0 || actionLike,
+    triggered: actionLike || synonymMatches.length > 0 || strongMatches.length > 0 || weakOnlyTriggered,
     matchedSignals,
     actionLike
   };
@@ -584,7 +622,14 @@ function scoreCategoriesWithSignals(text) {
   return scores;
 }
 
-function heuristicCategoryFallback(text) {
+function isOnboardingLikeRequest(text) {
+  const normalized = normalizeWhitespace(text);
+  return ONBOARDING_CHAT_REGEX.test(normalized) || CASUAL_CHAT_REGEX.test(normalized);
+}
+
+function heuristicCategoryFallback(text, features = {}) {
+  const hasTools = Boolean(features.hasToolsDeclared) || Number(features.toolMessages || 0) > 0;
+  if (hasTools) return "core_loop";
   if (/\b(code|debug|refactor|test|function|script|stack trace|exception)\b/i.test(text)) return "coding";
   if (/\b(summarize|summary|extract|action items|digest|invoice|receipt)\b/i.test(text)) return "summarization";
   if (/\b(plan|roadmap|schedule|itinerary|steps|break down)\b/i.test(text)) return "planning";
@@ -595,21 +640,34 @@ function heuristicCategoryFallback(text) {
   if (/\b(browser|automation|shell|git|workflow|pipeline|checkout)\b/i.test(text)) return "orchestration";
   if (/\b(reflect|stuck|loop|failure analysis|improve)\b/i.test(text)) return "reflection";
   if (/\b(heartbeat|ping|status|health check|keep-alive)\b/i.test(text)) return "heartbeat";
-  return "core_loop";
+  if (isOnboardingLikeRequest(text)) return "communication";
+  return "communication";
 }
 
 function heuristicComplexity(text, features, categoryId, safetyGate) {
+  const normalized = normalizeWhitespace(text);
+  const hasTools = Boolean(features.hasToolsDeclared) || Number(features.toolMessages || 0) > 0;
+  const shortPrompt = normalized.length > 0 && normalized.length <= 240;
+
   if (categoryId === "high_stakes") return "critical";
   if (safetyGate.actionLike) return "critical";
+  if (shortPrompt && !hasTools && isOnboardingLikeRequest(normalized)) return "simple";
+  if (shortPrompt && !hasTools && ["communication", "creative", "heartbeat"].includes(categoryId)) return "simple";
 
   if (features.approxTokens >= 12000 || features.messageCount >= 24) return "critical";
   if (features.approxTokens >= 4500 || features.messageCount >= 14) return "complex";
   if (features.hasMultimodal && features.approxTokens >= 1200) return "complex";
 
-  if (/\b(legal|contract|production outage|incident|root cause|irreversible|mission[- ]critical|compliance)\b/i.test(text)) {
+  if (/\b(production outage|incident|root cause|irreversible|mission[- ]critical|compliance)\b/i.test(normalized)) {
     return "critical";
   }
-  if (/\b(multi-step|multi constraint|algorithm|architecture|deep dive|synthesize|long-form)\b/i.test(text)) {
+  if (
+    /\b(legal|contract)\b/i.test(normalized) &&
+    /\b(sign|approve|execute|submit|file|binding|finalize|enforce)\b/i.test(normalized)
+  ) {
+    return "critical";
+  }
+  if (/\b(multi-step|multi constraint|algorithm|architecture|deep dive|synthesize|long-form)\b/i.test(normalized)) {
     return "complex";
   }
   if (features.approxTokens <= 280 && !features.hasMultimodal && !features.hasToolsDeclared) return "simple";
@@ -632,7 +690,7 @@ function heuristicClassification(lastUserMessage, recentContext, features, safet
 
   const scores = scoreCategoriesWithSignals(text);
   const top = scores[0];
-  const categoryId = top && top.score > 0 ? top.id : heuristicCategoryFallback(text);
+  const categoryId = top && top.score > 0 ? top.id : heuristicCategoryFallback(text, features);
   const complexity = heuristicComplexity(text, features, categoryId, safetyGate);
 
   return {
@@ -961,6 +1019,188 @@ function resolveCategoryRoute(categoryId, complexity) {
   }
 }
 
+function withRoutedModel(routeDecision, modelKey, label, guardrailReason) {
+  const modelId = modelIdForKey(modelKey);
+  if (!modelId) return routeDecision;
+  return {
+    ...routeDecision,
+    modelKey,
+    modelId,
+    label: label || routeDecision.label,
+    rule: `${routeDecision.rule}; ${guardrailReason}`
+  };
+}
+
+function strictBudgetTarget(routeDecision, features = {}) {
+  const categoryId = routeDecision?.categoryId || "communication";
+  const complexity = routeDecision?.adjustedComplexity || routeDecision?.complexity || "standard";
+  const hasTools = Boolean(features.hasToolsDeclared) || Number(features.toolMessages || 0) > 0;
+  const hasMultimodal = Boolean(features.hasMultimodal);
+  const approxTokens = Number(features.approxTokens || 0);
+
+  // Non-high-stakes traffic never starts directly on Opus in strict mode.
+  if (complexity === "critical") {
+    return {
+      modelKey: "sonnet",
+      reason: "critical non-high-stakes requests are capped at Sonnet"
+    };
+  }
+
+  if (complexity === "complex") {
+    if (categoryId === "coding") {
+      if (hasTools || hasMultimodal || approxTokens >= 3800) {
+        return {
+          modelKey: "gem31Pro",
+          reason: "complex coding with tools/long context uses mid-tier model first"
+        };
+      }
+      return {
+        modelKey: "grok",
+        reason: "complex coding defaults to budget model and escalates only on low confidence"
+      };
+    }
+
+    if (categoryId === "summarization" || categoryId === "research") {
+      if (hasMultimodal || approxTokens >= 5200) {
+        return {
+          modelKey: "gem31Pro",
+          reason: "long-context or multimodal analysis starts on mid-tier model"
+        };
+      }
+      return {
+        modelKey: "grok",
+        reason: "complex analysis defaults to budget model"
+      };
+    }
+
+    return {
+      modelKey: "grok",
+      reason: "complex non-high-stakes requests default to budget model"
+    };
+  }
+
+  if (categoryId === "heartbeat") {
+    return {
+      modelKey: "nano",
+      reason: "heartbeat traffic pinned to nano"
+    };
+  }
+
+  if (categoryId === "retrieval") {
+    return {
+      modelKey: "nano",
+      reason: "routine retrieval stays on nano"
+    };
+  }
+
+  if (categoryId === "summarization") {
+    if (hasMultimodal) {
+      return {
+        modelKey: "gemFlash",
+        reason: "routine multimodal summarization starts on Gemini Flash"
+      };
+    }
+    return {
+      modelKey: "nano",
+      reason: "routine summarization/extraction stays on nano"
+    };
+  }
+
+  if (categoryId === "coding") {
+    return {
+      modelKey: hasTools ? "grok" : "dsCoder",
+      reason: hasTools
+        ? "routine tool-assisted coding starts on Grok"
+        : "routine coding starts on DeepSeek Coder"
+    };
+  }
+
+  return {
+    modelKey: "grok",
+    reason: "default strict budget model"
+  };
+}
+
+function applyCostGuardrails(routeDecision, classification, lastUserMessage, features) {
+  if (FORCE_MODEL_ID) return routeDecision;
+  if (COST_EFFICIENCY_MODE === "off") return routeDecision;
+  if (routeDecision.categoryId === "high_stakes") return routeDecision;
+
+  const requestText = normalizeWhitespace(lastUserMessage);
+  const hasTools = Boolean(features?.hasToolsDeclared) || Number(features?.toolMessages || 0) > 0;
+  const shortPrompt = requestText.length > 0 && requestText.length <= 240;
+  const longContext = Number(features?.approxTokens || 0) >= 1800;
+  const hasMultimodal = Boolean(features?.hasMultimodal);
+
+  let next = { ...routeDecision };
+
+  // Most setup/chit-chat traffic should stay on budget models.
+  if (isOnboardingLikeRequest(requestText) && !hasTools) {
+    next = withRoutedModel(
+      next,
+      "grok",
+      "BUDGET_GUARDRAIL",
+      "Cost guardrail: onboarding/social setup forced to budget model."
+    );
+  }
+
+  if (COST_EFFICIENCY_MODE === "strict") {
+    const target = strictBudgetTarget(next, features);
+    if (target?.modelKey && target.modelKey !== next.modelKey) {
+      next = withRoutedModel(next, target.modelKey, "BUDGET_GUARDRAIL", `Cost guardrail strict: ${target.reason}.`);
+    }
+  }
+
+  if (!ALLOW_DIRECT_PREMIUM_MODELS) {
+    if (next.modelKey === "opus") {
+      const downgraded = next.adjustedComplexity === "critical" ? "sonnet" : "grok";
+      next = withRoutedModel(
+        next,
+        downgraded,
+        "BUDGET_GUARDRAIL",
+        "Cost guardrail: blocked direct Opus route for non-high-stakes request."
+      );
+    }
+    if (next.modelKey === "sonnet") {
+      const shouldDowngradeSonnet =
+        next.adjustedComplexity === "simple" ||
+        next.adjustedComplexity === "standard" ||
+        (COST_EFFICIENCY_MODE === "strict" &&
+          next.adjustedComplexity !== "critical" &&
+          shortPrompt &&
+          !hasTools &&
+          !longContext &&
+          !hasMultimodal);
+      if (shouldDowngradeSonnet) {
+        next = withRoutedModel(
+          next,
+          "grok",
+          "BUDGET_GUARDRAIL",
+          "Cost guardrail: downgraded Sonnet for low-complexity request."
+        );
+      }
+    }
+  }
+
+  if (
+    COST_EFFICIENCY_MODE === "strict" &&
+    next.modelKey === "gem31Pro" &&
+    shortPrompt &&
+    !hasTools &&
+    !longContext &&
+    !hasMultimodal
+  ) {
+    next = withRoutedModel(
+      next,
+      "grok",
+      "BUDGET_GUARDRAIL",
+      "Cost guardrail: downgraded Gem31Pro for short conversational request."
+    );
+  }
+
+  return next;
+}
+
 function resolveRouteDecision(classification, safetyGate) {
   if (FORCE_MODEL_ID) {
     return {
@@ -976,7 +1216,7 @@ function resolveRouteDecision(classification, safetyGate) {
     };
   }
 
-  const categoryId = normalizeCategoryId(classification.categoryId) || "core_loop";
+  const categoryId = normalizeCategoryId(classification.categoryId) || "communication";
   const baseComplexity = normalizeComplexity(classification.complexity) || "standard";
   const adjustedComplexity = applyRoutingProfile(baseComplexity, categoryId);
   const route = resolveCategoryRoute(categoryId, adjustedComplexity);
@@ -994,10 +1234,32 @@ function resolveRouteDecision(classification, safetyGate) {
   };
 }
 
-function buildEscalationTarget(modelKey, score) {
+function shouldEscalateFromSelfCheck(score, routeDecision) {
+  if (score >= 4) return false;
+  if (score <= 1) return true;
+  if (routeDecision.categoryId === "high_stakes") return true;
+  if (COST_EFFICIENCY_MODE === "strict") {
+    if (routeDecision.adjustedComplexity === "critical") return true;
+    if (routeDecision.adjustedComplexity === "complex") return true;
+    return false;
+  }
+  return true;
+}
+
+function buildEscalationTarget(modelKey, score, routeDecision = null) {
   if (score >= 4) return null;
   if (modelKey === "opus") return null;
-  if (score <= 1) return "opus";
+  if (score <= 1) {
+    if (
+      COST_EFFICIENCY_MODE === "strict" &&
+      routeDecision?.categoryId !== "high_stakes" &&
+      routeDecision?.adjustedComplexity !== "critical"
+    ) {
+      if (!modelKey) return "sonnet";
+      return ESCALATION_PATH[modelKey] || "sonnet";
+    }
+    return "opus";
+  }
   if (!modelKey) return "opus";
   return ESCALATION_PATH[modelKey] || "opus";
 }
@@ -1099,6 +1361,8 @@ app.get("/health", (req, res) => {
     service: "astrolabe",
     version: "0.2.0-beta.1",
     routing_profile: ROUTING_PROFILE,
+    cost_efficiency_mode: COST_EFFICIENCY_MODE,
+    allow_direct_premium_models: ALLOW_DIRECT_PREMIUM_MODELS,
     safety_gate: ENABLE_SAFETY_GATE
   });
 });
@@ -1154,6 +1418,7 @@ app.post("/v1/chat/completions", async (req, res) => {
 
     classifierResult = await classifyRequest(lastUserMessage, recentContext, features, safetyGate);
     routeDecision = resolveRouteDecision(classifierResult, safetyGate);
+    routeDecision = applyCostGuardrails(routeDecision, classifierResult, lastUserMessage, features);
 
     const outboundMessages =
       safetyGate.triggered && HIGH_STAKES_CONFIRM_MODE === "prompt"
@@ -1233,7 +1498,10 @@ app.post("/v1/chat/completions", async (req, res) => {
     const firstSelfCheck = await runSelfCheck(lastUserMessage, firstAnswer);
     confidenceScore = firstSelfCheck.score;
 
-    let escalationTarget = buildEscalationTarget(finalModelKey, firstSelfCheck.score);
+    let escalationTarget = null;
+    if (shouldEscalateFromSelfCheck(firstSelfCheck.score, routeDecision)) {
+      escalationTarget = buildEscalationTarget(finalModelKey, firstSelfCheck.score, routeDecision);
+    }
     if (routeDecision.categoryId === "high_stakes" && routeDecision.label === "FLOOR" && firstSelfCheck.score < 5) {
       escalationTarget = "opus";
     }
@@ -1333,11 +1601,19 @@ module.exports = {
     parseSelfCheckOutput,
     resolveCategoryRoute,
     resolveRouteDecision,
+    applyCostGuardrails,
+    shouldEscalateFromSelfCheck,
     buildEscalationTarget,
     applyRoutingProfile,
+    isOnboardingLikeRequest,
     normalizeCategoryId,
     normalizeComplexity,
+    normalizeRoutingProfile,
+    normalizeHighStakesConfirmMode,
     isHighStakesConfirmed,
-    HIGH_STAKES_CONFIRM_TOKEN
+    HIGH_STAKES_CONFIRM_TOKEN,
+    ROUTING_PROFILE,
+    COST_EFFICIENCY_MODE,
+    ALLOW_DIRECT_PREMIUM_MODELS
   }
 };

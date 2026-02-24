@@ -10,6 +10,8 @@ Astrolabe exposes:
 
 It accepts standard chat completion payloads and forwards them to OpenRouter after policy-based model routing.
 
+Use `GET /health` to confirm active runtime mode values such as `routing_profile` and `cost_efficiency_mode`.
+
 ## Authentication
 
 If `ASTROLABE_API_KEY` is configured, send one of:
@@ -23,8 +25,11 @@ If `ASTROLABE_API_KEY` is empty, requests are accepted without inbound auth.
 
 - Default: streaming (`stream` omitted or true)
 - Non-streaming: send `stream: false` for JSON response + self-check/escalation flow
+- Default release profile is budget-first with strict cost-efficiency guardrails enabled.
 
 ## High-stakes strict mode
+
+This is separate from `ASTROLABE_COST_EFFICIENCY_MODE=strict` (cost routing behavior).
 
 If `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`, high-stakes requests require an exact confirmation token before execution:
 

@@ -46,8 +46,8 @@ const MODELS = {
 ## Self-check and escalation policy
 
 1. Score >= 4: keep current model response.
-2. Score 2-3: escalate one policy step up and rerun once.
-3. Score 1: escalate directly to Opus.
+2. Score 2-3: in `strict` cost mode, escalate only for complex/critical/high-stakes routes; simple/standard requests return with low-confidence signal.
+3. Score 1: in `strict` cost mode, non-critical routes escalate one tier up; critical/high-stakes routes escalate to Opus.
 4. Max one escalation per request.
 5. If final score remains low, response is returned with `x-astrolabe-low-confidence: true`.
 
@@ -91,9 +91,20 @@ curl -X POST http://localhost:3000/v1/chat/completions ^
 
 ## Optional routing configuration
 
+`strict` is used in two different settings with different behavior:
+
+- `ASTROLABE_COST_EFFICIENCY_MODE=strict` controls budget aggressiveness for routing/escalation.
+- `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict` controls high-stakes confirmation blocking.
+
 ```env
 # balanced | budget | quality
-ASTROLABE_ROUTING_PROFILE=balanced
+ASTROLABE_ROUTING_PROFILE=budget
+
+# strict | balanced | off
+ASTROLABE_COST_EFFICIENCY_MODE=strict
+
+# if false, non-high-stakes direct Sonnet/Opus routes are guarded down to cheaper models
+ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS=false
 
 # true | false
 ASTROLABE_ENABLE_SAFETY_GATE=true
@@ -116,6 +127,49 @@ ASTROLABE_CONTEXT_CHARS=2500
 # hard override all routing (full model id)
 ASTROLABE_FORCE_MODEL=
 ```
+
+### Mode reference
+
+| Setting | Values | Default | Controls |
+| --- | --- | --- | --- |
+| `ASTROLABE_ROUTING_PROFILE` | `budget`, `balanced`, `quality` | `budget` | Base policy aggressiveness |
+| `ASTROLABE_COST_EFFICIENCY_MODE` | `strict`, `balanced`, `off` | `strict` | Cost guardrail strictness |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | `prompt`, `strict`, `off` | `prompt` | High-stakes confirmation behavior |
+
+Invalid mode values are normalized to safe defaults (`budget`, `strict`, `prompt`).
+
+### Complete environment variable reference
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `OPENROUTER_API_KEY` | Yes | none | Required OpenRouter upstream key |
+| `ASTROLABE_API_KEY` | No (recommended) | empty | Inbound API auth for Astrolabe |
+| `PORT` | No | `3000` | HTTP listen port |
+| `OPENROUTER_SITE_URL` | No | empty | Optional `HTTP-Referer` header for OpenRouter |
+| `OPENROUTER_APP_NAME` | No | empty | Optional `X-Title` header for OpenRouter |
+| `ASTROLABE_ROUTING_PROFILE` | No | `budget` | Policy profile selection |
+| `ASTROLABE_COST_EFFICIENCY_MODE` | No | `strict` | Cost guardrail mode |
+| `ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS` | No | `false` | Allow/block direct Sonnet/Opus on non-high-stakes routes |
+| `ASTROLABE_ENABLE_SAFETY_GATE` | No | `true` | Enable high-stakes detection |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | No | `prompt` | High-stakes confirmation policy |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | No | `confirm` | Confirmation token used in strict high-stakes mode |
+| `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR` | No | `false` | Allow Sonnet floor for high-stakes in budget routing |
+| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | Primary classifier model key |
+| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | Primary self-check model key |
+| `ASTROLABE_CONTEXT_MESSAGES` | No | `8` | Classifier context message bound (`3-20`) |
+| `ASTROLABE_CONTEXT_CHARS` | No | `2500` | Classifier context char bound (`600-12000`) |
+| `ASTROLABE_FORCE_MODEL` | No | empty | Hard override to one model id |
+
+See [docs/configuration.mdx](docs/configuration.mdx) for full behavior details and preset profiles.
+
+Default release stance for `0.2.0-beta.1`: budget-first routing with strict cost-efficiency guardrails.
+
+Strict mode guardrails are global, not just onboarding:
+
+- Simple/standard non-high-stakes requests are pinned to budget models (`nano`, `grok`, `dsCoder`, `gemFlash`).
+- Complex non-high-stakes requests start budget-first and only move up when complexity/context justifies it.
+- Non-high-stakes requests are capped below Opus by default.
+- Premium routes are reached primarily via safety gate or confidence-driven escalation.
 
 ## Safety gate behavior
 
@@ -159,7 +213,7 @@ npm test
 1. `Missing OPENROUTER_API_KEY`
    - Set key in `.env` and restart.
 2. `high_stakes_confirmation_required`
-   - In strict mode, include the exact configured token in header/body.
+   - If `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`, include the exact configured token in header/body.
 3. Frequent escalations
    - Increase routing profile quality or tighten category prompts.
 4. `est_usd=n/a`

@@ -35,3 +35,12 @@ Check:
 Cause: upstream usage fields were omitted.
 
 Fix: this is expected for some providers/responses; cost estimation requires token usage.
+
+## Config change had no effect
+
+Check:
+
+1. Restarted Astrolabe after editing env vars
+2. Edited the correct runtime environment (local `.env` vs deployment env)
+3. `GET /health` reflects expected normalized values for `routing_profile` and `cost_efficiency_mode`
+4. Variable names and values match `/configuration` exactly

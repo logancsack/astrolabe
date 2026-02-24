@@ -244,6 +244,8 @@
           "service",
           "version",
           "routing_profile",
+          "cost_efficiency_mode",
+          "allow_direct_premium_models",
           "safety_gate"
         ],
         "properties": {
@@ -257,10 +259,30 @@
             "type": "string"
           },
           "routing_profile": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "budget",
+              "balanced",
+              "quality"
+            ],
+            "description": "Active normalized routing profile."
+          },
+          "cost_efficiency_mode": {
+            "type": "string",
+            "enum": [
+              "strict",
+              "balanced",
+              "off"
+            ],
+            "description": "Active normalized cost-efficiency guardrail mode."
+          },
+          "allow_direct_premium_models": {
+            "type": "boolean",
+            "description": "Whether direct non-high-stakes premium model routes are allowed."
           },
           "safety_gate": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether high-stakes safety detection is enabled."
           }
         },
         "additionalProperties": true

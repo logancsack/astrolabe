@@ -3,78 +3,89 @@ title: "Configuration"
 description: "Configure Astrolabe 0.2.0-beta.1 routing policy, safety gates, and escalation behavior."
 ---
 
-Astrolabe config is environment-driven, with routing policy definitions in `server.js`.
+Astrolabe is configured entirely through environment variables.
 
-## Routing profile
+After changing any setting, restart the server.
+
+Use `GET /health` to verify active normalized runtime mode values (`routing_profile`, `cost_efficiency_mode`, and more).
+
+## Mode quick reference
+
+Astrolabe has three primary mode controls:
+
+| Setting | Values | Default | Controls |
+| --- | --- | --- | --- |
+| `ASTROLABE_ROUTING_PROFILE` | `budget`, `balanced`, `quality` | `budget` | Base policy aggressiveness before cost guardrails |
+| `ASTROLABE_COST_EFFICIENCY_MODE` | `strict`, `balanced`, `off` | `strict` | How aggressively guardrails push toward cheaper models |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | `prompt`, `strict`, `off` | `prompt` | High-stakes confirmation behavior |
+
+`strict` appears in two different settings:
+
+- `ASTROLABE_COST_EFFICIENCY_MODE=strict`: budget strictness
+- `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`: confirmation strictness
+
+## Recommended presets
+
+### Maximum savings (default release posture)
+
+```bash
+ASTROLABE_ROUTING_PROFILE=budget
+ASTROLABE_COST_EFFICIENCY_MODE=strict
+ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS=false
+ASTROLABE_ENABLE_SAFETY_GATE=true
+ASTROLABE_HIGH_STAKES_CONFIRM_MODE=prompt
+```
+
+### Balanced capability
 
 ```bash
 ASTROLABE_ROUTING_PROFILE=balanced
-```
-
-Supported values:
-
-- `balanced` (default): normal policy behavior
-- `budget`: cost-biased for lower-risk categories
-- `quality`: quality-biased (complexity nudged up one level)
-
-## Safety gate controls
-
-```bash
+ASTROLABE_COST_EFFICIENCY_MODE=balanced
+ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS=false
 ASTROLABE_ENABLE_SAFETY_GATE=true
 ASTROLABE_HIGH_STAKES_CONFIRM_MODE=prompt
+```
+
+### Highest caution on sensitive actions
+
+```bash
+ASTROLABE_ROUTING_PROFILE=budget
+ASTROLABE_COST_EFFICIENCY_MODE=strict
+ASTROLABE_ENABLE_SAFETY_GATE=true
+ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict
 ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
-ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR=false
 ```
 
-- `ASTROLABE_ENABLE_SAFETY_GATE`: enables high-stakes detection pre-classification
-- `ASTROLABE_HIGH_STAKES_CONFIRM_MODE`:
-  - `prompt`: inject safety system policy into high-stakes requests
-  - `strict`: block high-stakes requests unless exact confirmation token is present
-  - `off`: disable confirmation behavior
-- `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN`: exact token required in `x-astrolabe-confirmed` or `metadata.astrolabe_confirmed`
-- `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR`: allows Sonnet floor in budget profile for high-stakes category
+## Complete environment variable reference
 
-## Classifier and self-check models
+| Variable | Required | Default | Allowed values | Effect |
+| --- | --- | --- | --- | --- |
+| `OPENROUTER_API_KEY` | Yes | none | OpenRouter key string | Required to send upstream requests |
+| `ASTROLABE_API_KEY` | No (recommended) | empty | any string | Inbound auth key for Astrolabe endpoint |
+| `PORT` | No | `3000` | integer | HTTP listen port |
+| `OPENROUTER_SITE_URL` | No | empty | URL | Sent as `HTTP-Referer` to OpenRouter |
+| `OPENROUTER_APP_NAME` | No | empty | string | Sent as `X-Title` to OpenRouter |
+| `ASTROLABE_ROUTING_PROFILE` | No | `budget` | `budget`, `balanced`, `quality` | Policy complexity adjustment before guardrails |
+| `ASTROLABE_COST_EFFICIENCY_MODE` | No | `strict` | `strict`, `balanced`, `off` | Cost guardrail strength |
+| `ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS` | No | `false` | `true`, `false` | Allows/disallows direct Sonnet/Opus routing for non-high-stakes |
+| `ASTROLABE_ENABLE_SAFETY_GATE` | No | `true` | `true`, `false` | Enables pre-classification high-stakes detection |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | No | `prompt` | `prompt`, `strict`, `off` | High-stakes confirmation policy |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | No | `confirm` | string | Required token when confirm mode is `strict` |
+| `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR` | No | `false` | `true`, `false` | Allows Sonnet floor for high-stakes in budget profile |
+| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | `nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro` | Primary classifier model key |
+| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | `nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro` | Primary self-check model key |
+| `ASTROLABE_CONTEXT_MESSAGES` | No | `8` | integer (clamped `3-20`) | Max recent messages included in classifier context |
+| `ASTROLABE_CONTEXT_CHARS` | No | `2500` | integer (clamped `600-12000`) | Max characters included in classifier context |
+| `ASTROLABE_FORCE_MODEL` | No | empty | full model id string | Bypasses routing and forces one upstream model |
 
-```bash
-ASTROLABE_CLASSIFIER_MODEL_KEY=nano
-ASTROLABE_SELF_CHECK_MODEL_KEY=nano
-```
+## Validation and fallback behavior
 
-Model keys are defined in `MODELS`:
+- Invalid `ASTROLABE_ROUTING_PROFILE` values fall back to `budget`.
+- Invalid `ASTROLABE_COST_EFFICIENCY_MODE` values fall back to `strict`.
+- Invalid `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` values fall back to `prompt`.
+- Unknown classifier/self-check model keys are skipped and Astrolabe falls back to built-in candidate chains.
+- `ASTROLABE_CONTEXT_MESSAGES` and `ASTROLABE_CONTEXT_CHARS` are clamped to safe ranges.
 
-- `nano`
-- `grok`
-- `sonnet`
-- `opus`
-- `dsCoder`
-- `gemFlash`
-- `gem31Pro`
+## Pricing notes
 
-## Classifier context window
-
-```bash
-ASTROLABE_CONTEXT_MESSAGES=8
-ASTROLABE_CONTEXT_CHARS=2500
-```
-
-These bounds control how much recent chat context is included in classifier prompts.
-
-## Force-model override
-
-```bash
-ASTROLABE_FORCE_MODEL=anthropic/claude-opus-4.6
-```
-
-When set, Astrolabe bypasses route selection and forwards all requests to this model id.
-
-## OpenRouter metadata headers
-
-```bash
-OPENROUTER_SITE_URL=https://your-site.example
-OPENROUTER_APP_NAME=Astrolabe
-```
-
-## Cost estimates
-
-Cost logs rely on `pricePer1M` in `server.js`, keyed by full model id. Update this table whenever provider pricing changes.
+Cost logs use the `pricePer1M` table in `server.js` keyed by full model id. Update that table when provider pricing changes.
