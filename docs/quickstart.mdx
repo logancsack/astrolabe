@@ -1,7 +1,17 @@
 ---
 title: "Quickstart"
-description: "Run Astrolabe locally and test the proxy endpoint."
+description: "Run Astrolabe locally and verify routing behavior end-to-end."
 ---
+
+This quickstart gets Astrolabe running locally and confirms that routing is active.
+
+## Before you start
+
+You need:
+
+- Node.js `>=20`
+- an OpenRouter API key
+- a local terminal in the `Astrolabe` directory
 
 ## 1. Install dependencies
 
@@ -11,7 +21,7 @@ npm install
 
 ## 2. Configure environment variables
 
-Copy `.env.example` to `.env` and set real values:
+Copy `.env.example` to `.env` and set at least:
 
 ```bash
 OPENROUTER_API_KEY=your_openrouter_key_here
@@ -19,7 +29,13 @@ ASTROLABE_API_KEY=set_a_long_random_secret_here
 PORT=3000
 ```
 
-Optional OpenRouter headers:
+What these do:
+
+- `OPENROUTER_API_KEY`: upstream credential Astrolabe uses to execute model calls
+- `ASTROLABE_API_KEY`: inbound credential your clients must send to call Astrolabe
+- `PORT`: local listen port
+
+Optional OpenRouter metadata headers:
 
 ```bash
 OPENROUTER_SITE_URL=https://your-site.example
@@ -34,7 +50,16 @@ npm start
 
 Astrolabe listens on `http://localhost:3000` by default.
 
-## 4. Test the endpoint
+## 4. Validate service health
+
+```bash
+curl http://localhost:3000/health \
+  -H "Authorization: Bearer your_astrolabe_api_key"
+```
+
+Expected: JSON with `ok: true` plus active mode values like `routing_profile` and `cost_efficiency_mode`.
+
+## 5. Test chat completions
 
 ```bash
 curl -X POST http://localhost:3000/v1/chat/completions \
@@ -43,8 +68,30 @@ curl -X POST http://localhost:3000/v1/chat/completions \
   -d '{"model":"ignored-by-astrolabe","messages":[{"role":"user","content":"Say hello in one line."}]}'
 ```
 
+`model` is accepted for compatibility, but Astrolabe selects the final upstream model unless `ASTROLABE_FORCE_MODEL` is set.
+
+## 6. Verify routing metadata
+
+Inspect response headers for:
+
+- `x-astrolabe-category`
+- `x-astrolabe-complexity`
+- `x-astrolabe-initial-model`
+- `x-astrolabe-final-model`
+- `x-astrolabe-route-label`
+
+These headers show how Astrolabe interpreted and routed the request.
+
+## What happens after setup
+
+Once connected, your client request path is:
+
+`Client -> Astrolabe policy engine -> OpenRouter -> selected model -> Client`
+
+This means you can tune quality/cost/safety behavior in one place without changing your client protocol.
+
 <Note>
-`model` is accepted for compatibility but Astrolabe overrides it with the selected routed model.
 Default behavior is budget-first routing with strict cost-efficiency guardrails.
-For mode selection and full env variable behavior, see `/configuration`.
+For detailed mode behavior, see [Configuration](/configuration).
+For end-to-end architecture details, see [How Astrolabe Works](/how-it-works).
 </Note>

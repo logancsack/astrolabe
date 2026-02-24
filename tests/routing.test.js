@@ -57,6 +57,18 @@ test("coding simple route uses DeepSeek coder budget model", () => {
   assert.equal(route.label, "BUDGET");
 });
 
+test("core loop standard route prefers kimi value tier", () => {
+  const route = internals.resolveCategoryRoute("core_loop", "standard");
+  assert.equal(route.modelKey, "kimiK25");
+  assert.equal(route.label, "VALUE");
+});
+
+test("planning standard route prefers glm value tier", () => {
+  const route = internals.resolveCategoryRoute("planning", "standard");
+  assert.equal(route.modelKey, "glm5");
+  assert.equal(route.label, "VALUE");
+});
+
 test("high-stakes route defaults to opus always", () => {
   const route = internals.resolveCategoryRoute("high_stakes", "critical");
   assert.equal(route.modelKey, "opus");
@@ -64,13 +76,13 @@ test("high-stakes route defaults to opus always", () => {
 });
 
 test("escalation path follows policy", () => {
-  assert.equal(internals.buildEscalationTarget("grok", 2), "sonnet");
+  assert.equal(internals.buildEscalationTarget("grok", 2), "kimiK25");
   assert.equal(
     internals.buildEscalationTarget("grok", 1, {
       categoryId: "communication",
       adjustedComplexity: "standard"
     }),
-    "sonnet"
+    "kimiK25"
   );
   assert.equal(
     internals.buildEscalationTarget("grok", 1, {
@@ -80,6 +92,23 @@ test("escalation path follows policy", () => {
     "opus"
   );
   assert.equal(internals.buildEscalationTarget("opus", 3), null);
+});
+
+test("forced route never escalates on self-check", () => {
+  const shouldEscalate = internals.shouldEscalateFromSelfCheck(1, {
+    categoryId: "communication",
+    adjustedComplexity: "standard",
+    label: "FORCED"
+  });
+  assert.equal(shouldEscalate, false);
+  assert.equal(
+    internals.buildEscalationTarget("nano", 1, {
+      categoryId: "communication",
+      adjustedComplexity: "standard",
+      label: "FORCED"
+    }),
+    null
+  );
 });
 
 test("classifier parser accepts strict json", () => {
@@ -168,7 +197,7 @@ test("strict cost guardrail keeps standard planning on budget model", () => {
   assert.equal(guarded.label, "BUDGET_GUARDRAIL");
 });
 
-test("strict cost guardrail caps critical non-high-stakes routes at sonnet", () => {
+test("strict cost guardrail caps critical non-high-stakes routes at value tier", () => {
   const routeDecision = {
     categoryId: "orchestration",
     complexity: "critical",
@@ -186,7 +215,7 @@ test("strict cost guardrail caps critical non-high-stakes routes at sonnet", () 
     "Recover the failed deployment pipeline with rollback steps.",
     { hasToolsDeclared: true, toolMessages: 1, approxTokens: 2200 }
   );
-  assert.equal(guarded.modelKey, "sonnet");
+  assert.equal(guarded.modelKey, "kimiK25");
   assert.equal(guarded.label, "BUDGET_GUARDRAIL");
 });
 
@@ -234,7 +263,7 @@ test("strict cost guardrail preserves mid-tier for long-context multimodal summa
   assert.equal(guarded.label, "BUDGET_GUARDRAIL");
 });
 
-test("strict cost guardrail keeps critical non-high-stakes at sonnet even when prompt is short", () => {
+test("strict cost guardrail keeps critical non-high-stakes at value tier even when prompt is short", () => {
   const routeDecision = {
     categoryId: "communication",
     complexity: "critical",
@@ -252,7 +281,7 @@ test("strict cost guardrail keeps critical non-high-stakes at sonnet even when p
     "Handle this carefully.",
     { hasToolsDeclared: false, toolMessages: 0, approxTokens: 160 }
   );
-  assert.equal(guarded.modelKey, "sonnet");
+  assert.equal(guarded.modelKey, "kimiK25");
   assert.equal(guarded.label, "BUDGET_GUARDRAIL");
 });
 

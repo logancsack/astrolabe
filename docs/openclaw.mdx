@@ -3,11 +3,24 @@ title: "Connect OpenClaw"
 description: "Use Astrolabe as OpenClaw's OpenAI-compatible base URL."
 ---
 
-## Update your OpenClaw endpoint
+This guide connects OpenClaw to Astrolabe without changing the OpenAI-compatible payload format your agents already use.
 
-1. Set OpenClaw's base URL to your Astrolabe host.
-2. Keep using OpenAI-compatible `chat/completions` requests.
-3. Set OpenClaw's API key to the same value as `ASTROLABE_API_KEY`.
+## Integration idea
+
+OpenClaw keeps sending standard chat-completion requests.
+
+The only change is the base URL:
+
+- Before: OpenClaw talks directly to OpenRouter.
+- After: OpenClaw talks to Astrolabe, and Astrolabe talks to OpenRouter.
+
+That one change adds centralized routing, safety, and cost policy to every request.
+
+## Update OpenClaw endpoint
+
+1. Set OpenClaw base URL to your Astrolabe host.
+2. Keep using OpenAI-compatible `chat/completions` request format.
+3. Set OpenClaw API key to the same value as `ASTROLABE_API_KEY`.
 
 ### Base URL examples
 
@@ -15,12 +28,31 @@ description: "Use Astrolabe as OpenClaw's OpenAI-compatible base URL."
 2. Local Astrolabe: `http://localhost:3000/v1`
 3. Railway Astrolabe: `https://your-app-name.up.railway.app/v1`
 
+## What changes in runtime behavior
+
+After integration, each request gets:
+
+- category/complexity classification
+- safety-gate checks for high-stakes signals
+- cost-aware model routing
+- fallback retries for model/provider availability
+- metadata headers that show route outcomes
+
+OpenClaw still receives normal completion responses (`id`, `choices`, `usage`).
+
 ## Compatibility notes
 
 - Endpoint: `POST /v1/chat/completions`
 - Request body: OpenAI-compatible chat completion payload
 - Response body: OpenRouter passthrough shape (`id`, `choices`, `usage`, etc.)
-- Streaming: enabled by default unless you send `stream: false`
+- Streaming: enabled by default unless `stream: false`
+
+## Quick validation checklist
+
+1. Send a test request through OpenClaw.
+2. Confirm a successful response.
+3. Inspect response headers for `x-astrolabe-category`, `x-astrolabe-initial-model`, and `x-astrolabe-final-model`.
+4. Verify logs include request routing details.
 
 <Info>
 Set `ASTROLABE_API_KEY` in production. If it is empty, your public endpoint is unauthenticated.

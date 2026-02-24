@@ -1,27 +1,35 @@
 ---
 title: "Configuration"
-description: "Configure Astrolabe 0.2.0-beta.1 routing policy, safety gates, and escalation behavior."
+description: "Configure Astrolabe routing, safety behavior, and cost guardrails."
 ---
 
 Astrolabe is configured entirely through environment variables.
 
-After changing any setting, restart the server.
+After changing settings, restart the server.
 
-Use `GET /health` to verify active normalized runtime mode values (`routing_profile`, `cost_efficiency_mode`, and more).
+Use `GET /health` to confirm active normalized runtime values (`routing_profile`, `cost_efficiency_mode`, and related flags).
+
+## Configuration mental model
+
+Astrolabe configuration operates in three layers:
+
+1. **Policy intent**: `ASTROLABE_ROUTING_PROFILE` adjusts baseline aggressiveness.
+2. **Cost controls**: `ASTROLABE_COST_EFFICIENCY_MODE` and premium-route controls shape spend behavior.
+3. **Safety controls**: high-stakes detection and confirmation requirements control sensitive execution.
+
+Overrides like `ASTROLABE_FORCE_MODEL` bypass these layers for deterministic testing or emergency pinning.
 
 ## Mode quick reference
 
-Astrolabe has three primary mode controls:
-
 | Setting | Values | Default | Controls |
 | --- | --- | --- | --- |
-| `ASTROLABE_ROUTING_PROFILE` | `budget`, `balanced`, `quality` | `budget` | Base policy aggressiveness before cost guardrails |
-| `ASTROLABE_COST_EFFICIENCY_MODE` | `strict`, `balanced`, `off` | `strict` | How aggressively guardrails push toward cheaper models |
-| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | `prompt`, `strict`, `off` | `prompt` | High-stakes confirmation behavior |
+| `ASTROLABE_ROUTING_PROFILE` | `budget`, `balanced`, `quality` | `budget` | Baseline policy aggressiveness before cost guardrails |
+| `ASTROLABE_COST_EFFICIENCY_MODE` | `strict`, `balanced`, `off` | `strict` | How strongly guardrails push toward cheaper routes |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | `prompt`, `strict`, `off` | `prompt` | Confirmation behavior for high-stakes requests |
 
-`strict` appears in two different settings:
+`strict` appears in two separate contexts:
 
-- `ASTROLABE_COST_EFFICIENCY_MODE=strict`: budget strictness
+- `ASTROLABE_COST_EFFICIENCY_MODE=strict`: cost strictness
 - `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`: confirmation strictness
 
 ## Recommended presets
@@ -46,7 +54,7 @@ ASTROLABE_ENABLE_SAFETY_GATE=true
 ASTROLABE_HIGH_STAKES_CONFIRM_MODE=prompt
 ```
 
-### Highest caution on sensitive actions
+### High caution on sensitive actions
 
 ```bash
 ASTROLABE_ROUTING_PROFILE=budget
@@ -55,6 +63,13 @@ ASTROLABE_ENABLE_SAFETY_GATE=true
 ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict
 ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
 ```
+
+## Practical behavior examples
+
+- If requests feel too expensive: keep `routing_profile=budget`, `cost_efficiency_mode=strict`, and block direct premium routes.
+- If answers are often too shallow: move to `routing_profile=balanced` or `quality`.
+- If your workflow includes approvals/transfers/legal actions: keep safety gate enabled and use strict confirmation mode.
+- If you need deterministic upstream behavior for diagnostics: set `ASTROLABE_FORCE_MODEL`.
 
 ## Complete environment variable reference
 
@@ -72,11 +87,11 @@ ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
 | `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | No | `prompt` | `prompt`, `strict`, `off` | High-stakes confirmation policy |
 | `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | No | `confirm` | string | Required token when confirm mode is `strict` |
 | `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR` | No | `false` | `true`, `false` | Allows Sonnet floor for high-stakes in budget profile |
-| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | `nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro` | Primary classifier model key |
-| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | `nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro` | Primary self-check model key |
+| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | `nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5` | Primary classifier model key |
+| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | `nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5` | Primary self-check model key |
 | `ASTROLABE_CONTEXT_MESSAGES` | No | `8` | integer (clamped `3-20`) | Max recent messages included in classifier context |
 | `ASTROLABE_CONTEXT_CHARS` | No | `2500` | integer (clamped `600-12000`) | Max characters included in classifier context |
-| `ASTROLABE_FORCE_MODEL` | No | empty | full model id string | Bypasses routing and forces one upstream model |
+| `ASTROLABE_FORCE_MODEL` | No | empty | full model id string | Bypasses routing/classifier/self-check escalation and forces one upstream model |
 
 ## Validation and fallback behavior
 
@@ -86,6 +101,17 @@ ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
 - Unknown classifier/self-check model keys are skipped and Astrolabe falls back to built-in candidate chains.
 - `ASTROLABE_CONTEXT_MESSAGES` and `ASTROLABE_CONTEXT_CHARS` are clamped to safe ranges.
 
+## Operational verification checklist
+
+After configuration changes:
+
+1. Restart Astrolabe.
+2. Call `GET /health` and verify normalized mode values.
+3. Send one non-stream request and inspect `x-astrolabe-*` headers.
+4. Confirm routed model behavior in logs (`chosen_model`, `final_model`, `route`).
+
 ## Pricing notes
 
-Cost logs use the `pricePer1M` table in `server.js` keyed by full model id. Update that table when provider pricing changes.
+Cost logs use the `pricePer1M` table in `server.js` keyed by full model ID.
+
+When provider pricing changes, update this table so `est_usd` remains accurate.

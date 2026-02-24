@@ -5,8 +5,41 @@ openapi: "POST /v1/chat/completions"
 
 OpenAI-compatible chat completion endpoint routed by Astrolabe.
 
-Key behavior:
+## What this endpoint does
 
-- Uses policy-based routing and high-stakes safety gating before upstream execution.
-- Non-stream requests can self-check and escalate once.
-- Returns routing metadata headers (`x-astrolabe-*`) on successful responses.
+`POST /v1/chat/completions` keeps your existing request shape, but adds policy behavior before upstream execution:
+
+1. request classification (category + complexity)
+2. high-stakes safety logic
+3. cost-aware routing and fallback handling
+4. optional non-stream self-check with one-step escalation
+
+## Response contract
+
+The JSON/SSE body remains OpenAI-compatible.
+
+Astrolabe adds `x-astrolabe-*` metadata headers so you can inspect route decisions without parsing server logs.
+
+Key headers:
+
+- `x-astrolabe-category`: policy category chosen
+- `x-astrolabe-complexity`: classifier complexity
+- `x-astrolabe-adjusted-complexity`: complexity after routing-profile adjustment
+- `x-astrolabe-initial-model`: first successfully used upstream model
+- `x-astrolabe-final-model`: final model after optional escalation
+- `x-astrolabe-route-label`: policy label (`DEFAULT`, `VALUE`, `STANDARD`, `ESCALATE`, `BUDGET_GUARDRAIL`, `FORCED`, etc.)
+- `x-astrolabe-escalated`: whether non-stream response escalated
+
+## Forced-model behavior
+
+If `ASTROLABE_FORCE_MODEL` is set:
+
+- classifier routing is bypassed
+- self-check escalation is skipped
+- initial and final model remain the forced model ID
+
+## Use this endpoint when
+
+- you want OpenAI-compatible client behavior with centralized cost/safety routing
+- you need route transparency through metadata headers
+- you want fallback and escalation logic outside client code

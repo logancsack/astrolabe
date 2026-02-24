@@ -1,55 +1,77 @@
 ---
 title: "Astrolabe Docs"
-description: "OpenAI-compatible cost routing for OpenClaw using OpenRouter."
+description: "OpenAI-compatible routing for OpenClaw with policy, safety, and cost controls."
 ---
 
-Astrolabe is a headless OpenAI-compatible proxy for OpenClaw agents.
+Astrolabe is a headless OpenAI-compatible proxy that sits between OpenClaw and OpenRouter.
 
-It classifies each request, routes it to the cheapest effective model policy target, and can escalate when confidence is low.
+It receives each request, decides how risky and complex it is, routes to an appropriate model tier, and returns the same API shape clients already expect.
+
+## Why teams use Astrolabe
+
+Astrolabe is designed for environments where all three constraints matter at once:
+
+- response quality must stay high
+- model spend must stay predictable
+- safety-sensitive actions need stronger controls
+
+Instead of choosing one global model for everything, Astrolabe chooses per request.
+
+## At-a-glance architecture
+
+1. OpenClaw sends `POST /v1/chat/completions`.
+2. Astrolabe classifies category/complexity and applies safety + cost policy.
+3. Astrolabe selects a model and fallback chain.
+4. OpenRouter executes on the selected provider/model.
+5. Astrolabe returns response + routing metadata headers.
+
+For full request flow details, see [How Astrolabe Works](/how-it-works).
 
 <Card
-  title="Quickstart"
-  icon="rocket"
-  href="/quickstart"
+  title="How Astrolabe Works"
+  icon="terminal"
+  href="/how-it-works"
   horizontal
 >
-  Install and run Astrolabe locally in a few minutes.
+  Detailed architecture, lifecycle, and routing behavior.
 </Card>
 
-## What Astrolabe does
+## Core capabilities
 
-1. Classifies incoming chat requests with a low-cost model.
-2. Routes trivial and moderate tasks to lower-cost models.
-3. Escalates difficult requests to stronger models when needed.
-4. Preserves OpenAI-compatible request and response format.
+1. Category-aware routing across 12 operational categories.
+2. Safety-gate checks for high-stakes requests.
+3. Cost-efficiency guardrails to reduce unnecessary premium model usage.
+4. One-step self-check escalation for low-confidence non-stream responses.
+5. Model fallback chains for provider/model availability issues.
+6. Traceability through `x-astrolabe-*` headers and structured logs.
 
 <Columns cols={2}>
   <Card
-    title="Connect OpenClaw"
-    icon="plug"
-    href="/openclaw"
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
   >
-    Point OpenClaw at Astrolabe with no client code changes.
-  </Card>
-  <Card
-    title="Deploy to Railway"
-    icon="cloud-arrow-up"
-    href="/deploy/railway"
-  >
-    Ship a hosted endpoint for always-on agents.
+    Install and run Astrolabe locally in minutes.
   </Card>
   <Card
     title="Configuration"
     icon="sliders"
     href="/configuration"
   >
-    Full env var reference, mode matrix, and copy/paste presets.
+    Tune routing, safety, and cost controls.
+  </Card>
+  <Card
+    title="Connect OpenClaw"
+    icon="plug"
+    href="/openclaw"
+  >
+    Point OpenClaw at Astrolabe with no protocol changes.
   </Card>
   <Card
     title="API Reference"
     icon="terminal"
     href="/api-reference/introduction"
   >
-    Endpoint details for `/v1/chat/completions`.
+    Endpoint contracts and metadata semantics.
   </Card>
 </Columns>

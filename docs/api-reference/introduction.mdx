@@ -1,16 +1,25 @@
 ---
 title: "Introduction"
-description: "Astrolabe API surface and auth behavior."
+description: "Astrolabe API surface, behavior model, and auth semantics."
 ---
 
-Astrolabe exposes:
+Astrolabe exposes two primary endpoints:
 
 - `GET /health`
 - `POST /v1/chat/completions`
 
-It accepts standard chat completion payloads and forwards them to OpenRouter after policy-based model routing.
+Astrolabe accepts standard OpenAI-style chat payloads, then applies routing/safety policy before forwarding upstream.
 
-Use `GET /health` to confirm active runtime mode values such as `routing_profile` and `cost_efficiency_mode`.
+## API behavior model
+
+Think of Astrolabe as a policy-aware gateway:
+
+1. input stays OpenAI-compatible
+2. routing decisions happen server-side
+3. output stays OpenAI-compatible
+4. metadata headers explain what happened
+
+This means client integration remains simple while runtime policy stays centralized.
 
 ## Authentication
 
@@ -19,17 +28,28 @@ If `ASTROLABE_API_KEY` is configured, send one of:
 - `Authorization: Bearer <ASTROLABE_API_KEY>`
 - `x-api-key: <ASTROLABE_API_KEY>`
 
-If `ASTROLABE_API_KEY` is empty, requests are accepted without inbound auth.
+If `ASTROLABE_API_KEY` is empty, inbound requests are accepted without auth.
 
-## Streaming behavior
+## `/health` endpoint purpose
 
-- Default: streaming (`stream` omitted or true)
-- Non-streaming: send `stream: false` for JSON response + self-check/escalation flow
-- Default release profile is budget-first with strict cost-efficiency guardrails enabled.
+Use `GET /health` to validate active runtime mode values, including:
+
+- `routing_profile`
+- `cost_efficiency_mode`
+- `allow_direct_premium_models`
+- `safety_gate`
+
+This is the fastest way to confirm environment configuration is active.
+
+## Streaming vs non-streaming
+
+- Default behavior: streaming (`stream` omitted or `true`)
+- Non-streaming: send `stream: false` for JSON response and self-check/escalation flow
+- Forced-model mode (`ASTROLABE_FORCE_MODEL`): classifier and self-check escalation are skipped, and initial/final model are locked to the forced model
 
 ## High-stakes strict mode
 
-This is separate from `ASTROLABE_COST_EFFICIENCY_MODE=strict` (cost routing behavior).
+This is separate from `ASTROLABE_COST_EFFICIENCY_MODE=strict`.
 
 If `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`, high-stakes requests require an exact confirmation token before execution:
 

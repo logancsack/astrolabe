@@ -1,7 +1,17 @@
 ---
 title: "Deploy to Railway"
-description: "Host Astrolabe in production in a few minutes."
+description: "Host Astrolabe in production with clear rollout and validation steps."
 ---
+
+This guide deploys Astrolabe to Railway and validates that routing is working correctly in production.
+
+## Deployment architecture
+
+In production, request flow is:
+
+`OpenClaw/clients -> Railway-hosted Astrolabe -> OpenRouter -> routed model`
+
+Railway hosts the Astrolabe process only. Routing and safety behavior remain controlled by environment variables.
 
 ## Steps
 
@@ -12,11 +22,29 @@ description: "Host Astrolabe in production in a few minutes."
    - `OPENROUTER_API_KEY=...`
    - `ASTROLABE_API_KEY=...` (long random secret)
    - `PORT=3000` (optional)
-5. Deploy and copy your public URL.
-6. Point OpenClaw to `https://your-app-name.up.railway.app/v1`.
+5. Set optional policy variables (`ASTROLABE_ROUTING_PROFILE`, `ASTROLABE_COST_EFFICIENCY_MODE`, safety settings).
+6. Deploy and copy your public URL.
+7. Point OpenClaw to `https://your-app-name.up.railway.app/v1`.
+
+## Post-deploy verification
+
+Run these checks before production traffic:
+
+1. `GET /health` returns `ok: true` and expected mode values.
+2. A basic non-stream chat request succeeds.
+3. Response headers include `x-astrolabe-initial-model` and `x-astrolabe-final-model`.
+4. Logs show `category`, `route`, `chosen_model`, and `final_model` fields.
+
+## Rollout notes
+
+- Start with conservative settings (`budget` + `strict`) and observe routing outcomes.
+- If quality is below expectations for your workload, adjust toward `balanced`/`quality` profiles.
+- Keep a rollback path by storing previous env settings.
 
 ## Security checklist
 
 1. Keep `OPENROUTER_API_KEY` private.
-2. Always set `ASTROLABE_API_KEY` on public deployments.
-3. Rotate keys immediately if leaked.
+2. Always set `ASTROLABE_API_KEY` for public deployments.
+3. Use a high-entropy value for `ASTROLABE_API_KEY`.
+4. Rotate keys immediately if leaked.
+5. Restrict who can change Railway environment variables.

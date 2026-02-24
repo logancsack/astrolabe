@@ -318,6 +318,72 @@ test("route retries next model when first routed model is unavailable", { concur
   }
 });
 
+test("forced model bypasses classifier and self-check escalation", { concurrency: false }, async () => {
+  const modulePath = require.resolve("../server");
+  const cachedModule = require.cache[modulePath];
+  const previousForceModel = process.env.ASTROLABE_FORCE_MODEL;
+  let forcedApp = null;
+
+  try {
+    delete require.cache[modulePath];
+    process.env.ASTROLABE_FORCE_MODEL = "openai/gpt-5-nano";
+    ({ app: forcedApp } = require("../server"));
+  } finally {
+    if (previousForceModel == null) delete process.env.ASTROLABE_FORCE_MODEL;
+    else process.env.ASTROLABE_FORCE_MODEL = previousForceModel;
+    delete require.cache[modulePath];
+    if (cachedModule) require.cache[modulePath] = cachedModule;
+  }
+
+  const server = forcedApp.listen(0);
+  try {
+    const { port } = server.address();
+    const routedModelAttempts = [];
+
+    await withAxiosStub(async (url, payload, options) => {
+      if (isClassifierPayload(payload)) {
+        throw new Error("Classifier should be skipped when ASTROLABE_FORCE_MODEL is set.");
+      }
+      if (isSelfCheckPayload(payload)) {
+        throw new Error("Self-check should be skipped when ASTROLABE_FORCE_MODEL is set.");
+      }
+
+      routedModelAttempts.push(payload.model);
+      assert.equal(payload.model, "openai/gpt-5-nano");
+      return {
+        status: 200,
+        data: {
+          id: "chatcmpl-forced",
+          object: "chat.completion",
+          created: 1,
+          choices: [{ message: { role: "assistant", content: "Forced model response." } }],
+          usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 }
+        }
+      };
+    }, async () => {
+      const response = await requestJson(port, {
+        method: "POST",
+        path: "/v1/chat/completions",
+        body: {
+          stream: false,
+          messages: [{ role: "user", content: "Say hello in one line." }]
+        }
+      });
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(routedModelAttempts, ["openai/gpt-5-nano"]);
+      assert.equal(response.headers["x-astrolabe-route-label"], "FORCED");
+      assert.equal(response.headers["x-astrolabe-initial-model"], "openai/gpt-5-nano");
+      assert.equal(response.headers["x-astrolabe-final-model"], "openai/gpt-5-nano");
+      assert.equal(response.headers["x-astrolabe-escalated"], "false");
+      assert.equal(response.headers["x-astrolabe-confidence-score"], undefined);
+      assert.equal(response.body.choices[0].message.content, "Forced model response.");
+    });
+  } finally {
+    server.close();
+  }
+});
+
 test("streaming requests passthrough SSE payload", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {

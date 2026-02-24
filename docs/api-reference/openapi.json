@@ -118,7 +118,7 @@
                 }
               },
               "x-astrolabe-route-label": {
-                "description": "Route label from policy (for example DEFAULT, STANDARD, ESCALATE).",
+                "description": "Route label from policy (for example DEFAULT, VALUE, STANDARD, ESCALATE, BUDGET_GUARDRAIL, FORCED).",
                 "schema": {
                   "type": "string"
                 }
@@ -295,7 +295,7 @@
         "properties": {
           "model": {
             "type": "string",
-            "description": "Accepted for compatibility. Astrolabe chooses final upstream model unless ASTROLABE_FORCE_MODEL is set."
+            "description": "Accepted for compatibility. Astrolabe chooses final upstream model unless ASTROLABE_FORCE_MODEL is set; in forced mode classifier and self-check escalation are skipped."
           },
           "messages": {
             "type": "array",

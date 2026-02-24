@@ -1,0 +1,100 @@
+---
+title: "How Astrolabe Works"
+description: "Architecture, routing decisions, safety controls, and request lifecycle."
+---
+
+Astrolabe is a decision layer between your client and upstream models.
+
+When a request arrives, Astrolabe does not just forward it. It evaluates risk, complexity, and expected effort, then routes to a model tier that balances correctness and cost.
+
+## System map
+
+Astrolabe has four runtime responsibilities:
+
+1. **Understand intent**: classify what the request is trying to do.
+2. **Apply guardrails**: enforce safety and cost policies.
+3. **Execute reliably**: call the selected model with fallbacks.
+4. **Return traceability**: include metadata headers and logs showing what happened.
+
+Conceptual flow:
+
+`OpenClaw -> Astrolabe policy engine -> OpenRouter -> selected model -> Astrolabe metadata -> OpenClaw`
+
+## Request lifecycle
+
+For every `POST /v1/chat/completions` request:
+
+1. Parse request body, recent context, and conversation features.
+2. Run high-stakes signal detection.
+3. Classify category and complexity.
+4. Apply routing profile (`budget`/`balanced`/`quality`).
+5. Apply cost-efficiency guardrails (`strict`/`balanced`/`off`).
+6. Resolve initial model and fallback candidates.
+7. Execute upstream call.
+8. For non-streaming responses, run self-check and optionally escalate once.
+9. Return response with routing metadata headers.
+
+Forced-model mode (`ASTROLABE_FORCE_MODEL`) is a special case: classification and self-check escalation are skipped, and the forced model stays locked as both initial and final model.
+
+## Category and complexity
+
+Astrolabe routes using two dimensions:
+
+- **Category**: what type of work is requested (coding, retrieval, planning, high-stakes, etc.)
+- **Complexity**: how hard/risky the request is (`simple`, `standard`, `complex`, `critical`)
+
+This combination determines initial route labels like `DEFAULT`, `VALUE`, `STANDARD`, or `ESCALATE`.
+
+## Model tiers
+
+Astrolabe's model roster is organized by tier intent:
+
+- `ULTRA-CHEAP`: minimal-cost, high-volume trivial requests
+- `BUDGET`: default low-cost workhorse tier
+- `VALUE`: stronger capability at lower cost than standard premium models
+- `MID-TIER`: specialized long-context/multimodal reasoning routes
+- `STANDARD`: high-precision escalation tier
+- `PREMIUM`: maximum caution and high-stakes floor
+
+In day-to-day traffic, most requests should remain in ULTRA-CHEAP, BUDGET, or VALUE tiers.
+
+## Safety behavior
+
+High-stakes detection evaluates:
+
+- action-like language (payments, transfers, deletion, credential resets)
+- sensitive data signals (PII, legal/health-sensitive operations)
+
+Modes:
+
+- `prompt`: inject policy guidance and continue
+- `strict`: require explicit confirmation token before execution
+- `off`: no high-stakes confirmation handling
+
+## Cost behavior
+
+Cost controls are layered:
+
+1. **Routing profile** adjusts baseline complexity interpretation.
+2. **Cost efficiency mode** applies guardrails to avoid unnecessary premium routing.
+3. **Direct premium toggle** can block non-high-stakes direct Sonnet/Opus starts.
+
+In strict mode, low-risk traffic is intentionally pushed toward low-cost tiers first, then escalates only when confidence or risk justifies it.
+
+## Reliability and fallback
+
+Astrolabe uses candidate chains for each route.
+
+If the first upstream model is unavailable, retryable failures move to the next candidate in the chain. This keeps requests resilient without exposing provider-level complexity to clients.
+
+## What clients can observe
+
+Astrolabe adds `x-astrolabe-*` response headers including:
+
+- category and complexity
+- initial and final model IDs
+- route label
+- escalation flag
+- confidence score and low-confidence flag
+
+This metadata enables monitoring, audits, and policy tuning without changing client request format.
