@@ -1,10 +1,11 @@
 {
   "name": "astrolabe",
-  "version": "1.0.0",
-  "description": "Headless OpenAI-compatible proxy that routes OpenClaw traffic to the cheapest effective OpenRouter model.",
+  "version": "0.2.0-beta.1",
+  "description": "Astrolabe beta: policy-driven OpenAI-compatible router for OpenClaw with safety gating and model escalation.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test",
     "docs:dev": "cd docs && npx mint dev"
   },
   "engines": {

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Astrolabe API",
-    "version": "1.0.0",
-    "description": "OpenAI-compatible proxy endpoint with model-tier routing and optional auth."
+    "version": "0.2.0-beta.1",
+    "description": "OpenAI-compatible proxy with policy-based model routing, safety-gate checks, and optional inbound auth."
   },
   "servers": [
     {
@@ -16,11 +16,30 @@
     }
   ],
   "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Health check",
+        "description": "Returns service health and active routing profile metadata.",
+        "responses": {
+          "200": {
+            "description": "Healthy service response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/chat/completions": {
       "post": {
         "operationId": "createChatCompletion",
         "summary": "Create chat completion",
-        "description": "Accepts OpenAI-compatible chat requests, classifies tier, and forwards to OpenRouter.",
+        "description": "Accepts OpenAI-compatible chat requests, applies safety gating and policy routing, then forwards to OpenRouter.",
         "security": [
           {
             "bearerAuth": []
@@ -45,6 +64,20 @@
                       }
                     ]
                   }
+                },
+                "strictHighStakesConfirmation": {
+                  "value": {
+                    "stream": false,
+                    "messages": [
+                      {
+                        "role": "user",
+                        "content": "Please transfer funds to account ending 4321."
+                      }
+                    ],
+                    "metadata": {
+                      "astrolabe_confirmed": "confirm"
+                    }
+                  }
                 }
               }
             }
@@ -53,6 +86,80 @@
         "responses": {
           "200": {
             "description": "Successful response (JSON or stream)",
+            "headers": {
+              "x-astrolabe-category": {
+                "description": "Resolved routing category.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "x-astrolabe-complexity": {
+                "description": "Classifier complexity before routing-profile adjustment.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "x-astrolabe-adjusted-complexity": {
+                "description": "Complexity after routing profile adjustment.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "x-astrolabe-initial-model": {
+                "description": "Initial routed upstream model id.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "x-astrolabe-final-model": {
+                "description": "Final model id used after any escalation/fallback.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "x-astrolabe-route-label": {
+                "description": "Route label from policy (for example DEFAULT, STANDARD, ESCALATE).",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "x-astrolabe-escalated": {
+                "description": "Whether a non-stream request escalated to a stronger model.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                }
+              },
+              "x-astrolabe-confidence-score": {
+                "description": "Self-check score (1-5) when available.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "x-astrolabe-low-confidence": {
+                "description": "Whether final response confidence is considered low.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                }
+              },
+              "x-astrolabe-safety-gate": {
+                "description": "Whether the high-stakes safety gate was triggered.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -87,8 +194,28 @@
               }
             }
           },
+          "409": {
+            "description": "High-stakes confirmation required in strict mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
-            "description": "Upstream/internal error",
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Upstream provider/network error",
             "content": {
               "application/json": {
                 "schema": {
@@ -110,6 +237,34 @@
       }
     },
     "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "service",
+          "version",
+          "routing_profile",
+          "safety_gate"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "service": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "routing_profile": {
+            "type": "string"
+          },
+          "safety_gate": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      },
       "ChatCompletionRequest": {
         "type": "object",
         "required": [
@@ -118,7 +273,7 @@
         "properties": {
           "model": {
             "type": "string",
-            "description": "Accepted for compatibility. Astrolabe chooses final upstream model."
+            "description": "Accepted for compatibility. Astrolabe chooses final upstream model unless ASTROLABE_FORCE_MODEL is set."
           },
           "messages": {
             "type": "array",
@@ -130,7 +285,16 @@
           "stream": {
             "type": "boolean",
             "default": true,
-            "description": "If false, Astrolabe returns full JSON and can self-check/escalate."
+            "description": "If false, Astrolabe returns full JSON and runs self-check/escalation policy."
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Optional metadata passthrough. In strict high-stakes mode, `metadata.astrolabe_confirmed` may be required.",
+            "additionalProperties": true
+          },
+          "astrolabe_confirmed": {
+            "type": "string",
+            "description": "Optional strict-mode high-stakes confirmation token."
           }
         },
         "additionalProperties": true
@@ -169,12 +333,6 @@
       },
       "ChatCompletionResponse": {
         "type": "object",
-        "required": [
-          "id",
-          "object",
-          "created",
-          "choices"
-        ],
         "properties": {
           "id": {
             "type": "string"
@@ -220,6 +378,10 @@
                   "string",
                   "null"
                 ]
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": true
               }
             },
             "additionalProperties": true

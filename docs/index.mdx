@@ -5,7 +5,7 @@ description: "OpenAI-compatible cost routing for OpenClaw using OpenRouter."
 
 Astrolabe is a headless OpenAI-compatible proxy for OpenClaw agents.
 
-It classifies each request, routes it to the cheapest effective model tier, and can escalate when confidence is low.
+It classifies each request, routes it to the cheapest effective model policy target, and can escalate when confidence is low.
 
 <Card
   title="Quickstart"
@@ -19,8 +19,8 @@ It classifies each request, routes it to the cheapest effective model tier, and 
 ## What Astrolabe does
 
 1. Classifies incoming chat requests with a low-cost model.
-2. Routes trivial and moderate tasks to lower-cost tiers.
-3. Escalates difficult requests to a premium tier when needed.
+2. Routes trivial and moderate tasks to lower-cost models.
+3. Escalates difficult requests to stronger models when needed.
 4. Preserves OpenAI-compatible request and response format.
 
 <Columns cols={2}>
@@ -43,7 +43,7 @@ It classifies each request, routes it to the cheapest effective model tier, and 
     icon="sliders"
     href="/configuration"
   >
-    Tune model tiers, pricing tables, and routing behavior.
+    Tune routing policy, pricing tables, and safety behavior.
   </Card>
   <Card
     title="API Reference"

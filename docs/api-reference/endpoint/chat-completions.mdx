@@ -4,3 +4,9 @@ openapi: "POST /v1/chat/completions"
 ---
 
 OpenAI-compatible chat completion endpoint routed by Astrolabe.
+
+Key behavior:
+
+- Uses policy-based routing and high-stakes safety gating before upstream execution.
+- Non-stream requests can self-check and escalate once.
+- Returns routing metadata headers (`x-astrolabe-*`) on successful responses.

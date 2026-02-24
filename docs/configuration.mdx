@@ -1,48 +1,80 @@
 ---
 title: "Configuration"
-description: "Customize model routing, self-check behavior, and price estimates."
+description: "Configure Astrolabe 0.2.0-beta.1 routing policy, safety gates, and escalation behavior."
 ---
 
-Most Astrolabe behavior is configured directly in `server.js`.
+Astrolabe config is environment-driven, with routing policy definitions in `server.js`.
 
-## Model tiers
+## Routing profile
 
-```js
-const tierModels = {
-  TIER0: "openai/gpt-5-nano",
-  TIER1: "x-ai/grok-4.1-fast",
-  TIER2: "anthropic/claude-opus-4.6"
-};
+```bash
+ASTROLABE_ROUTING_PROFILE=balanced
 ```
 
-- `TIER0`: classifier + self-check model
-- `TIER1`: default serving tier
-- `TIER2`: premium fallback tier
+Supported values:
 
-## Cost estimation table
+- `balanced` (default): normal policy behavior
+- `budget`: cost-biased for lower-risk categories
+- `quality`: quality-biased (complexity nudged up one level)
 
-```js
-const pricePer1M = {
-  "openai/gpt-5-nano": { input: 0.05, output: 0.4 },
-  "x-ai/grok-4.1-fast": { input: 0.2, output: 0.5 },
-  "anthropic/claude-opus-4.6": { input: 15, output: 75 }
-};
+## Safety gate controls
+
+```bash
+ASTROLABE_ENABLE_SAFETY_GATE=true
+ASTROLABE_HIGH_STAKES_CONFIRM_MODE=prompt
+ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
+ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR=false
 ```
 
-Update this as provider pricing changes.
+- `ASTROLABE_ENABLE_SAFETY_GATE`: enables high-stakes detection pre-classification
+- `ASTROLABE_HIGH_STAKES_CONFIRM_MODE`:
+  - `prompt`: inject safety system policy into high-stakes requests
+  - `strict`: block high-stakes requests unless exact confirmation token is present
+  - `off`: disable confirmation behavior
+- `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN`: exact token required in `x-astrolabe-confirmed` or `metadata.astrolabe_confirmed`
+- `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR`: allows Sonnet floor in budget profile for high-stakes category
 
-## Routing and escalation
+## Classifier and self-check models
 
-1. `classifyTier(...)` selects `TIER0`, `TIER1`, or `TIER2`.
-2. Streaming requests are routed once and passed through.
-3. Non-streaming requests run `runSelfCheck(...)`.
-4. If self-check confidence is low, Astrolabe retries once on `TIER2`.
+```bash
+ASTROLABE_CLASSIFIER_MODEL_KEY=nano
+ASTROLABE_SELF_CHECK_MODEL_KEY=nano
+```
 
-## Optional upstream metadata
+Model keys are defined in `MODELS`:
 
-Set these env vars if you want OpenRouter attribution headers:
+- `nano`
+- `grok`
+- `sonnet`
+- `opus`
+- `dsCoder`
+- `gemFlash`
+- `gem31Pro`
+
+## Classifier context window
+
+```bash
+ASTROLABE_CONTEXT_MESSAGES=8
+ASTROLABE_CONTEXT_CHARS=2500
+```
+
+These bounds control how much recent chat context is included in classifier prompts.
+
+## Force-model override
+
+```bash
+ASTROLABE_FORCE_MODEL=anthropic/claude-opus-4.6
+```
+
+When set, Astrolabe bypasses route selection and forwards all requests to this model id.
+
+## OpenRouter metadata headers
 
 ```bash
 OPENROUTER_SITE_URL=https://your-site.example
 OPENROUTER_APP_NAME=Astrolabe
 ```
+
+## Cost estimates
+
+Cost logs rely on `pricePer1M` in `server.js`, keyed by full model id. Update this table whenever provider pricing changes.

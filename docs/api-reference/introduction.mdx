@@ -3,11 +3,12 @@ title: "Introduction"
 description: "Astrolabe API surface and auth behavior."
 ---
 
-Astrolabe exposes a single OpenAI-compatible endpoint:
+Astrolabe exposes:
 
+- `GET /health`
 - `POST /v1/chat/completions`
 
-It accepts standard chat completion payloads and forwards them to OpenRouter after model-tier routing.
+It accepts standard chat completion payloads and forwards them to OpenRouter after policy-based model routing.
 
 ## Authentication
 
@@ -22,3 +23,10 @@ If `ASTROLABE_API_KEY` is empty, requests are accepted without inbound auth.
 
 - Default: streaming (`stream` omitted or true)
 - Non-streaming: send `stream: false` for JSON response + self-check/escalation flow
+
+## High-stakes strict mode
+
+If `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`, high-stakes requests require an exact confirmation token before execution:
+
+- `x-astrolabe-confirmed: <ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN>`
+- `metadata.astrolabe_confirmed: "<ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN>"`
