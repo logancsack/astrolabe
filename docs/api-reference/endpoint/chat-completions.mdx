@@ -30,6 +30,12 @@ Key headers:
 - `x-astrolabe-route-label`: policy label (`DEFAULT`, `VALUE`, `STANDARD`, `ESCALATE`, `BUDGET_GUARDRAIL`, `FORCED`, etc.)
 - `x-astrolabe-escalated`: whether non-stream response escalated
 
+When rate limiting is enabled (`ASTROLABE_RATE_LIMIT_ENABLED=true`), responses also include:
+
+- `x-ratelimit-limit`
+- `x-ratelimit-remaining`
+- `x-ratelimit-reset` (unix timestamp seconds)
+
 ## Forced-model behavior
 
 If `ASTROLABE_FORCE_MODEL` is set:
@@ -37,6 +43,14 @@ If `ASTROLABE_FORCE_MODEL` is set:
 - classifier routing is bypassed
 - self-check escalation is skipped
 - initial and final model remain the forced model ID
+
+## Common error responses
+
+- `400 invalid_request_error`: malformed JSON (`invalid_json`) or missing/invalid `messages`.
+- `401 authentication_error`: missing or invalid Astrolabe API key.
+- `409 safety_confirmation_required`: high-stakes request blocked pending explicit confirmation token.
+- `413 invalid_request_error`: payload too large (`payload_too_large`).
+- `429 rate_limit_error`: request budget exceeded when `ASTROLABE_RATE_LIMIT_ENABLED=true` (`rate_limit_exceeded`, includes `retry-after`).
 
 ## Use this endpoint when
 

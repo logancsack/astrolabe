@@ -28,7 +28,8 @@ If `ASTROLABE_API_KEY` is configured, send one of:
 - `Authorization: Bearer <ASTROLABE_API_KEY>`
 - `x-api-key: <ASTROLABE_API_KEY>`
 
-If `ASTROLABE_API_KEY` is empty, inbound requests are accepted without auth.
+If `ASTROLABE_API_KEY` is empty, inbound requests are accepted without auth in local/non-production runtime.
+In `NODE_ENV=production`, Astrolabe refuses to start without `ASTROLABE_API_KEY`.
 
 ## `/health` endpoint purpose
 
@@ -38,6 +39,9 @@ Use `GET /health` to validate active runtime mode values, including:
 - `cost_efficiency_mode`
 - `allow_direct_premium_models`
 - `safety_gate`
+- `rate_limit_enabled`
+- `rate_limit_window_ms`
+- `rate_limit_max_requests`
 
 This is the fastest way to confirm environment configuration is active.
 

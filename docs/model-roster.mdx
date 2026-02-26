@@ -1,0 +1,86 @@
+---
+title: "Model Roster Reference"
+description: "Astrolabe model matrix with runtime costs, capabilities, benchmark signals, and confidence labels."
+---
+
+This page is the source of truth for Astrolabe's model roster posture and benchmark interpretation.
+
+Last updated: **February 25, 2026**
+
+## Snapshot and source policy
+
+1. Runtime availability, context, and modality data are taken from the OpenRouter models API snapshot on February 25, 2026.
+2. Cost values are documented from Astrolabe `MODELS` in `server.js` and cross-checked against OpenRouter metadata.
+3. Benchmarks use a mixed policy:
+   - `Direct`: exact model/version evidence exists
+   - `Family`: nearest family/version proxy
+   - `Vendor`: vendor/model-card self-reported claim
+4. Missing exact benchmark rows are shown as `N/A` instead of inferred values.
+
+## Runtime model matrix
+
+| Key | Model ID | Provider Name | Tier | Input $/1M | Output $/1M | Context | Input Modalities | Tools/Reasoning Support | Primary Routing Role |
+| --- | --- | --- | --- | ---: | ---: | ---: | --- | --- | --- |
+| `opus` | `anthropic/claude-opus-4.6` | Anthropic: Claude Opus 4.6 | `PREMIUM` | 5.00 | 25.00 | 1,000,000 | text, image | Yes | High-stakes floor and final escalation |
+| `sonnet` | `anthropic/claude-sonnet-4.6` | Anthropic: Claude Sonnet 4.6 | `STANDARD` | 3.00 | 15.00 | 1,000,000 | text, image | Yes | Escalation layer and optional high-stakes budget floor |
+| `m25` | `minimax/minimax-m2.5` | MiniMax: MiniMax M2.5 | `VALUE` | 0.30 | 1.10 | 196,608 | text | Yes | Primary standard/complex text workhorse |
+| `kimiK25` | `moonshotai/kimi-k2.5` | MoonshotAI: Kimi K2.5 | `VALUE` | 0.45 | 2.20 | 262,144 | text, image | Yes | Multimodal specialist default |
+| `glm5` | `z-ai/glm-5` | Z.ai: GLM 5 | `VALUE` | 0.95 | 2.55 | 204,800 | text | Yes | Large-context engineering and deep text-heavy specialist |
+| `grok` | `x-ai/grok-4.1-fast` | xAI: Grok 4.1 Fast | `BUDGET` | 0.20 | 0.50 | 2,000,000 | text, image | Yes | Conversational and light-tool budget route |
+| `nano` | `openai/gpt-5-nano` | OpenAI: GPT-5 Nano | `ULTRA-CHEAP` | 0.05 | 0.40 | 400,000 | text, image, file | Yes | Classifier/self-check default and trivial simple routes |
+| `dsCoder` | `deepseek/deepseek-v3.2` | DeepSeek: DeepSeek V3.2 | `ULTRA-CHEAP` | 0.25 | 0.40 | 163,840 | text | Yes | Simple coding starter route |
+| `gemFlash` | `google/gemini-3-flash-preview` | Google: Gemini 3 Flash Preview | `MID-TIER` | 0.50 | 3.00 | 1,048,576 | text, image, file, audio, video | Yes | Conditional fallback/specialist path, not cheap-first default |
+| `gem31Pro` | `google/gemini-3.1-pro-preview` | Google: Gemini 3.1 Pro Preview | `MID-TIER` | 2.00 | 12.00 | 1,048,576 | text, image, file, audio, video | Yes | Very-long-context multimodal specialist/escalation |
+
+## Benchmark signal matrix
+
+| Key | SWE-bench signal | BFCL signal | Other signal | Confidence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `m25` | `mini-SWE-agent + MiniMax M2.5 (high reasoning)` = 75.8% resolved | `N/A` exact row in current BFCL overall snapshot | MiniMax launch claims: 80.2 SWE-bench Verified, 76.9 BFCL multi-turn, 76.3 BrowseComp | Vendor + Family | Strong directional signal; treat vendor claims as non-independent |
+| `grok` | `N/A` found on SWE-bench board snapshot | `Grok-4-1-fast-reasoning (FC)` rank 5, overall 69.57%, multi-turn 58.87% | OpenRouter metadata shows low cost and 2M context | Direct BFCL (family SWE unavailable) | Strong tool-calling signal; no direct SWE row in snapshot |
+| `kimiK25` | `mini-SWE-agent + Kimi K2.5 (high reasoning)` = 70.8% | Nearest BFCL row: `Moonshotai-Kimi-K2-Instruct (FC)` | Kimi model-card evidence available | Direct SWE + Family BFCL | Use as multimodal specialist; BFCL proxy is K2 family |
+| `glm5` | `mini-SWE-agent + GLM-5 (high reasoning)` = 72.8% | Nearest BFCL row: `GLM-4.6 (FC thinking)` rank 4, overall 72.38%, multi-turn 68.00% | GLM model-card evidence available | Direct SWE + Family BFCL | GLM-5 BFCL exact row unavailable in snapshot |
+| `gem31Pro` | `mini-SWE-agent + Gemini 3 Pro Preview` = 74.2% (live-SWE-agent row 77.4%) | `Gemini-3-Pro-Preview` rows (Prompt/FC) | Large multimodal context support from OpenRouter | Family | Strong but expensive; used conditionally |
+| `sonnet` | Nearest rows: Claude 4.5 Sonnet cluster on SWE-bench | `Claude-Sonnet-4-5-20250929 (FC)` rank 2, overall 73.24%, multi-turn 61.37% | High quality but materially higher cost | Family | Escalation-focused in Astrolabe policy |
+| `opus` | Includes `mini-SWE-agent + Claude Opus 4.6` = 75.6% plus higher 4.5 Opus cluster entries | `Claude-Opus-4-5-20251101 (FC)` rank 1, overall 77.47%, multi-turn 68.38% | Highest-cost tier in roster | Direct/Familial mixed | Reserved for high-stakes or final escalation |
+| `nano` | `mini-SWE-agent + GPT-5 nano (2025-08-07)` = 34.8% | `GPT-5-nano-2025-08-07 (FC)` rank 24, overall 51.45%, multi-turn 34.50% | Lowest-cost classifier/self-check role | Family | Kept away from hard reasoning/tool chains |
+| `dsCoder` | `mini-SWE-agent + DeepSeek V3.2 (high reasoning)` = 70.0% | `DeepSeek-V3.2-Exp` rows (FC/Prompt+Thinking) | Very low cost for simple coding starts | Family | Escalates quickly for non-trivial tasks |
+| `gemFlash` | `mini-SWE-agent + Gemini 3 Flash (high reasoning)` = 75.8% | `N/A` direct row found for Gemini 3 Flash in BFCL snapshot | Multimodal input breadth but higher output cost than budget/value models | Family/Partial | Fallback/specialist, not cheap-first route |
+
+## Benchmark row mapping used in this page
+
+- `m25`: SWE signal `mini-SWE-agent + MiniMax M2.5 (high reasoning) 75.8`; vendor claims from MiniMax launch post (`80.2 SWE-bench Verified`, `76.3 BrowseComp`, `76.9 BFCL multi-turn`) with confidence `Vendor + Family`.
+- `grok`: BFCL signal `Grok-4-1-fast-reasoning (FC)`; SWE signal `N/A found on SWE-bench board snapshot`; confidence `Direct BFCL / no SWE`.
+- `kimiK25`: SWE signal `mini-SWE-agent + Kimi K2.5 (high reasoning) 70.8`; BFCL nearest `Kimi K2` family entry; confidence `Direct SWE + Family BFCL`.
+- `glm5`: SWE signal `mini-SWE-agent + GLM-5 (high reasoning) 72.8`; BFCL nearest `GLM-4.6 (FC thinking)`; confidence `Direct SWE + Family BFCL`.
+- `gem31Pro`: SWE signal `mini-SWE-agent + Gemini 3 Pro Preview 74.2` (plus live-SWE-agent `77.4`); BFCL `Gemini-3-Pro-Preview (FC/Prompt)`; confidence `Family`.
+- `sonnet`: SWE nearest `Claude 4.5 Sonnet` entries; BFCL `Claude-Sonnet-4-5` entry; confidence `Family`.
+- `opus`: SWE includes `mini-SWE-agent + Claude Opus 4.6 75.6`; BFCL nearest `Claude-Opus-4-5`; confidence `Direct/Familial mixed`.
+- `nano`: SWE `GPT-5 nano` row; BFCL `GPT-5-nano-2025-08-07`; confidence `Family`.
+- `dsCoder`: SWE `DeepSeek V3.2` row; BFCL `DeepSeek-V3.2-Exp` rows; confidence `Family`.
+- `gemFlash`: SWE `Gemini 3 Flash` row; BFCL direct entry not found in snapshot; confidence `Family/Partial`.
+
+## Interpretation note
+
+Benchmark rows are not apples-to-apples because they vary by agent harness, tool scaffolding, prompt strategy, and model version/date. Astrolabe routing should stay aligned to runtime outcomes (cost-first with specialist promotion rules), not single-board rank ordering.
+
+## Sources
+
+- OpenRouter models API: https://openrouter.ai/api/v1/models
+- OpenRouter model pages:
+  - https://openrouter.ai/models/minimax/minimax-m2.5
+  - https://openrouter.ai/models/x-ai/grok-4.1-fast
+  - https://openrouter.ai/models/moonshotai/kimi-k2.5
+  - https://openrouter.ai/models/z-ai/glm-5
+  - https://openrouter.ai/models/google/gemini-3.1-pro-preview
+  - https://openrouter.ai/models/anthropic/claude-sonnet-4.6
+  - https://openrouter.ai/models/anthropic/claude-opus-4.6
+  - https://openrouter.ai/models/openai/gpt-5-nano
+  - https://openrouter.ai/models/deepseek/deepseek-v3.2
+  - https://openrouter.ai/models/google/gemini-3-flash-preview
+- SWE-bench leaderboard: https://www.swebench.com/
+- BFCL leaderboard: https://gorilla.cs.berkeley.edu/leaderboard
+- BFCL data CSV: https://gorilla.cs.berkeley.edu/data_overall.csv
+- MiniMax launch post: https://www.minimax.io/news/minimax-m25
+- Kimi K2.5 model card: https://huggingface.co/moonshotai/Kimi-K2.5
+- GLM-5 model card: https://huggingface.co/zai-org/GLM-5

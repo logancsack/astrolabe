@@ -33,6 +33,17 @@ Fix:
 2. Verify there is no trailing whitespace in env value.
 3. Confirm client and server are using the same key.
 
+## `rate_limit_exceeded`
+
+What it means: request volume exceeded configured budget while `ASTROLABE_RATE_LIMIT_ENABLED=true`.
+
+Fix:
+
+1. Wait for `retry-after` seconds and retry.
+2. Increase `ASTROLABE_RATE_LIMIT_MAX_REQUESTS`.
+3. Increase `ASTROLABE_RATE_LIMIT_WINDOW_MS`.
+4. Disable limiter if needed for trusted/private traffic.
+
 ## `high_stakes_confirmation_required`
 
 What it means: high-stakes signal detected while `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`.
@@ -42,6 +53,16 @@ Fix:
 1. Resend with `x-astrolabe-confirmed: <token>`.
 2. Or include `metadata.astrolabe_confirmed: "<token>"` in request body.
 3. Ensure token matches `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` exactly.
+
+## `invalid_json` or `payload_too_large`
+
+What it means: request body is malformed JSON or exceeds payload limit.
+
+Fix:
+
+1. Validate JSON before sending.
+2. Ensure `messages` is present and valid.
+3. Reduce payload size if request is too large.
 
 ## Need full JSON instead of SSE
 

@@ -19,6 +19,50 @@ Astrolabe configuration operates in three layers:
 
 Overrides like `ASTROLABE_FORCE_MODEL` bypass these layers for deterministic testing or emergency pinning.
 
+For complete model economics, see [Model Roster Reference](/model-roster).  
+For full routing logic and threshold-level behavior, see [Routing Reference](/routing-reference).
+
+## API key generation
+
+`ASTROLABE_API_KEY` is not an OpenRouter key. It is your own random shared secret between client and Astrolabe.
+
+Generate one:
+
+```bash
+# cross-platform (Node)
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# OpenSSL (macOS/Linux)
+openssl rand -hex 32
+```
+
+Then use the same value in:
+
+1. `ASTROLABE_API_KEY` on the Astrolabe server.
+2. Client request auth (`Authorization: Bearer <key>` or `x-api-key: <key>`).
+
+## Config-to-routing-stage map
+
+| Variable | Routing stage primarily affected | Default | Quick effect |
+| --- | --- | --- | --- |
+| `ASTROLABE_ROUTING_PROFILE` | Complexity adjustment (`applyRoutingProfile`) | `budget` | Adjusts baseline complexity before route lookup |
+| `ASTROLABE_COST_EFFICIENCY_MODE` | Guardrails + escalation strictness | `strict` | Controls strict retargeting posture (`strict`/`balanced`/`off`) |
+| `ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS` | Premium blocking guardrail | `false` | Blocks direct non-high-stakes `sonnet`/`opus` starts |
+| `ASTROLABE_ENABLE_SAFETY_GATE` | Pre-classification safety detection | `true` | Enables/disables early high-stakes trigger |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | High-stakes confirmation policy | `prompt` | `prompt`/`strict`/`off` for sensitive actions |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | High-stakes strict confirmation | `confirm` | Required token when confirm mode is `strict` |
+| `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR` | `high_stakes` base route | `false` | Allows `sonnet` floor in budget profile |
+| `ASTROLABE_CLASSIFIER_MODEL_KEY` | Classifier preferred model | `nano` | Sets first classifier candidate key |
+| `ASTROLABE_SELF_CHECK_MODEL_KEY` | Self-check preferred model | `nano` | Sets first self-check candidate key |
+| `ASTROLABE_CONTEXT_MESSAGES` | Classifier context shaping | `8` | Limits messages included for classifier context |
+| `ASTROLABE_CONTEXT_CHARS` | Classifier context shaping | `2500` | Limits context chars for classifier prompt |
+| `ASTROLABE_RATE_LIMIT_ENABLED` | Request admission control | `false` | Enables in-memory rate limit middleware for `POST /v1/chat/completions` |
+| `ASTROLABE_RATE_LIMIT_WINDOW_MS` | Request admission control | `60000` | Window duration for request counting |
+| `ASTROLABE_RATE_LIMIT_MAX_REQUESTS` | Request admission control | `120` | Maximum allowed requests per key in each window |
+| `ASTROLABE_FORCE_MODEL` | Full routing override | empty | Pins one upstream model and bypasses routing/escalation |
+
+Detailed interactions for each setting are in [Routing Reference](/routing-reference#config-to-logic-map).
+
 ## Mode quick reference
 
 | Setting | Values | Default | Controls |
@@ -69,6 +113,7 @@ ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
 - If requests feel too expensive: keep `routing_profile=budget`, `cost_efficiency_mode=strict`, and block direct premium routes.
 - If answers are often too shallow: move to `routing_profile=balanced` or `quality`.
 - If your workflow includes approvals/transfers/legal actions: keep safety gate enabled and use strict confirmation mode.
+- If a self-hosted instance sees bursty traffic or runaway loops: enable rate limiting and set a conservative request budget.
 - If you need deterministic upstream behavior for diagnostics: set `ASTROLABE_FORCE_MODEL`.
 
 ## Complete environment variable reference
@@ -76,7 +121,7 @@ ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
 | Variable | Required | Default | Allowed values | Effect |
 | --- | --- | --- | --- | --- |
 | `OPENROUTER_API_KEY` | Yes | none | OpenRouter key string | Required to send upstream requests |
-| `ASTROLABE_API_KEY` | No (recommended) | empty | any string | Inbound auth key for Astrolabe endpoint |
+| `ASTROLABE_API_KEY` | Yes in production (recommended locally) | empty | any string | Inbound auth key for Astrolabe endpoint |
 | `PORT` | No | `3000` | integer | HTTP listen port |
 | `OPENROUTER_SITE_URL` | No | empty | URL | Sent as `HTTP-Referer` to OpenRouter |
 | `OPENROUTER_APP_NAME` | No | empty | string | Sent as `X-Title` to OpenRouter |
@@ -87,10 +132,13 @@ ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
 | `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | No | `prompt` | `prompt`, `strict`, `off` | High-stakes confirmation policy |
 | `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | No | `confirm` | string | Required token when confirm mode is `strict` |
 | `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR` | No | `false` | `true`, `false` | Allows Sonnet floor for high-stakes in budget profile |
-| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | `nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5` | Primary classifier model key |
-| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | `nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5` | Primary self-check model key |
+| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | `nano`, `grok`, `m25`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5` | Primary classifier model key |
+| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | `nano`, `grok`, `m25`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5` | Primary self-check model key |
 | `ASTROLABE_CONTEXT_MESSAGES` | No | `8` | integer (clamped `3-20`) | Max recent messages included in classifier context |
 | `ASTROLABE_CONTEXT_CHARS` | No | `2500` | integer (clamped `600-12000`) | Max characters included in classifier context |
+| `ASTROLABE_RATE_LIMIT_ENABLED` | No | `false` | `true`, `false` | Enables in-memory request rate limiting on chat completions endpoint |
+| `ASTROLABE_RATE_LIMIT_WINDOW_MS` | No | `60000` | integer (clamped `1000-3600000`) | Rate limit window duration in milliseconds |
+| `ASTROLABE_RATE_LIMIT_MAX_REQUESTS` | No | `120` | integer (clamped `1-100000`) | Maximum requests per key within each window |
 | `ASTROLABE_FORCE_MODEL` | No | empty | full model id string | Bypasses routing/classifier/self-check escalation and forces one upstream model |
 
 ## Validation and fallback behavior
@@ -98,15 +146,18 @@ ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
 - Invalid `ASTROLABE_ROUTING_PROFILE` values fall back to `budget`.
 - Invalid `ASTROLABE_COST_EFFICIENCY_MODE` values fall back to `strict`.
 - Invalid `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` values fall back to `prompt`.
+- In `NODE_ENV=production`, Astrolabe refuses to start if `ASTROLABE_API_KEY` is unset.
 - Unknown classifier/self-check model keys are skipped and Astrolabe falls back to built-in candidate chains.
+- `ASTROLABE_RATE_LIMIT_WINDOW_MS` and `ASTROLABE_RATE_LIMIT_MAX_REQUESTS` are clamped to safe ranges.
 - `ASTROLABE_CONTEXT_MESSAGES` and `ASTROLABE_CONTEXT_CHARS` are clamped to safe ranges.
+- `m25` (`minimax/minimax-m2.5`) is text-first in current OpenRouter routing; multimodal policy paths still prefer `kimiK25`/`gem31Pro`.
 
 ## Operational verification checklist
 
 After configuration changes:
 
 1. Restart Astrolabe.
-2. Call `GET /health` and verify normalized mode values.
+2. Call `GET /health` and verify normalized mode values (including rate-limit settings if enabled).
 3. Send one non-stream request and inspect `x-astrolabe-*` headers.
 4. Confirm routed model behavior in logs (`chosen_model`, `final_model`, `route`).
 
@@ -115,3 +166,5 @@ After configuration changes:
 Cost logs use the `pricePer1M` table in `server.js` keyed by full model ID.
 
 When provider pricing changes, update this table so `est_usd` remains accurate.
+
+Keep [Model Roster Reference](/model-roster) in sync when pricing, context, or modality metadata changes.

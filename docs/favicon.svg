@@ -1,31 +1,30 @@
-<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 410 410" fill="none" xmlns="http://www.w3.org/2000/svg">
   <style>
-    .ring { stroke: #E2E8F0; }
-    .ticks { stroke: #CBD5E1; }
-    .arm-dark { stroke: #1E293B; }
-    .dot-dark { fill: #1E293B; }
-    .arm-blue { stroke: #0055FF; }
-    .dot-blue { fill: #0055FF; }
-    .dot-core { fill: #FFFFFF; }
+    .ring { stroke: #334155; }
+    .ticks { stroke: #475569; }
+    .arm-left { stroke: #E5E7EB; }
+    .dot-left { fill: #E5E7EB; }
+    .arm-blue { stroke: #3B82F6; }
+    .dot-blue { fill: #3B82F6; }
+    .dot-core { fill: #0F172A; }
 
     @media (prefers-color-scheme: dark) {
-      .ring { stroke: #334155; }
-      .ticks { stroke: #475569; }
-      .arm-dark { stroke: #F8F9FA; }
-      .dot-dark { fill: #F8F9FA; }
-      .arm-blue { stroke: #3B82F6; }
-      .dot-blue { fill: #3B82F6; }
-      .dot-core { fill: #0F172A; }
+      .ring { stroke: #F8FAFC; }
+      .ticks { stroke: #E2E8F0; }
+      .arm-left { stroke: #1E2E4A; }
+      .dot-left { fill: #1E2E4A; }
+      .arm-blue { stroke: #0F5BFF; }
+      .dot-blue { fill: #0F5BFF; }
+      .dot-core { fill: #F8FAFC; }
     }
   </style>
 
-  <circle class="ring" cx="50" cy="50" r="42" stroke-width="3" />
-  <path class="ticks" d="M 50 4 L 50 12 M 50 88 L 50 96 M 4 50 L 12 50 M 88 50 L 96 50" stroke-width="3" stroke-linecap="round" />
-  <path class="arm-dark" d="M 50 30 L 24 80" stroke-width="8" stroke-linecap="round" />
-  <path class="arm-dark" d="M 34.5 60 L 65.5 60" stroke-width="8" stroke-linecap="round" />
-  <circle class="dot-dark" cx="24" cy="80" r="6" />
-  <path class="arm-blue" d="M 50 14 L 50 30 L 76 80" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
-  <circle class="dot-blue" cx="50" cy="14" r="6" />
-  <circle class="dot-blue" cx="76" cy="80" r="8" />
-  <circle class="dot-core" cx="76" cy="80" r="3" />
+  <circle class="ring" cx="205" cy="205" r="182" stroke-width="12" />
+  <path class="ticks" d="M205 4V32M205 378V406M4 205H32M378 205H406" stroke-width="12" stroke-linecap="round" />
+  <path class="arm-left" d="M205 123L92 323" stroke-width="30" stroke-linecap="round" />
+  <circle class="dot-left" cx="92" cy="323" r="24" />
+  <path class="arm-blue" d="M205 53V123L298 323" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" />
+  <circle class="dot-blue" cx="205" cy="53" r="27" />
+  <circle class="dot-blue" cx="298" cy="323" r="24" />
+  <circle class="dot-core" cx="298" cy="323" r="10" />
 </svg>

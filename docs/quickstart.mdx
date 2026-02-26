@@ -29,6 +29,14 @@ ASTROLABE_API_KEY=set_a_long_random_secret_here
 PORT=3000
 ```
 
+`ASTROLABE_API_KEY` is your own random shared secret (not your OpenRouter key). Use this same value in client auth requests.
+
+Generate one quickly:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
 What these do:
 
 - `OPENROUTER_API_KEY`: upstream credential Astrolabe uses to execute model calls
@@ -94,4 +102,6 @@ This means you can tune quality/cost/safety behavior in one place without changi
 Default behavior is budget-first routing with strict cost-efficiency guardrails.
 For detailed mode behavior, see [Configuration](/configuration).
 For end-to-end architecture details, see [How Astrolabe Works](/how-it-works).
+For the full routing tree and threshold logic, see [Routing Reference](/routing-reference).
+For model costs and benchmark confidence labels, see [Model Roster Reference](/model-roster).
 </Note>

@@ -50,9 +50,9 @@ function requestJson(port, { method = "GET", path = "/", body, headers = {} }) {
   });
 }
 
-function requestRaw(port, { method = "GET", path = "/", body, headers = {} }) {
+function requestRaw(port, { method = "GET", path = "/", body, rawBody, headers = {} }) {
   return new Promise((resolve, reject) => {
-    const payload = body == null ? null : JSON.stringify(body);
+    const payload = rawBody != null ? String(rawBody) : body == null ? null : JSON.stringify(body);
     const req = http.request(
       {
         hostname: "127.0.0.1",
@@ -131,6 +131,142 @@ test("POST /v1/chat/completions returns 400 when messages is missing", async () 
     });
     assert.equal(response.status, 400);
     assert.equal(response.body.error.type, "invalid_request_error");
+  } finally {
+    server.close();
+  }
+});
+
+test("POST /v1/chat/completions returns JSON error on malformed JSON body", async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const response = await requestRaw(port, {
+      method: "POST",
+      path: "/v1/chat/completions",
+      rawBody: "{\"messages\":[",
+      headers: { "content-type": "application/json" }
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(String(response.headers["content-type"] || ""), /application\/json/i);
+
+    const parsed = JSON.parse(response.body);
+    assert.equal(parsed.error.type, "invalid_request_error");
+    assert.equal(parsed.error.code, "invalid_json");
+  } finally {
+    server.close();
+  }
+});
+
+test("rate limiter blocks over-budget requests before upstream call", { concurrency: false }, async () => {
+  const modulePath = require.resolve("../server");
+  const cachedModule = require.cache[modulePath];
+  const previousEnv = {
+    ASTROLABE_RATE_LIMIT_ENABLED: process.env.ASTROLABE_RATE_LIMIT_ENABLED,
+    ASTROLABE_RATE_LIMIT_MAX_REQUESTS: process.env.ASTROLABE_RATE_LIMIT_MAX_REQUESTS,
+    ASTROLABE_RATE_LIMIT_WINDOW_MS: process.env.ASTROLABE_RATE_LIMIT_WINDOW_MS,
+    ASTROLABE_API_KEY: process.env.ASTROLABE_API_KEY
+  };
+
+  let limitedApp = null;
+  try {
+    delete require.cache[modulePath];
+    process.env.ASTROLABE_RATE_LIMIT_ENABLED = "true";
+    process.env.ASTROLABE_RATE_LIMIT_MAX_REQUESTS = "1";
+    process.env.ASTROLABE_RATE_LIMIT_WINDOW_MS = "60000";
+    process.env.ASTROLABE_API_KEY = "rate-limit-test-key";
+    ({ app: limitedApp } = require("../server"));
+  } finally {
+    for (const [name, value] of Object.entries(previousEnv)) {
+      if (value == null) delete process.env[name];
+      else process.env[name] = value;
+    }
+    delete require.cache[modulePath];
+    if (cachedModule) require.cache[modulePath] = cachedModule;
+  }
+
+  const server = limitedApp.listen(0);
+  try {
+    const { port } = server.address();
+    let axiosCalls = 0;
+
+    await withAxiosStub(async (url, payload, options) => {
+      axiosCalls += 1;
+
+      if (isClassifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    category: "communication",
+                    complexity: "simple",
+                    confidence: 5,
+                    reason: "casual chat",
+                    matched_signals: ["chat"],
+                    high_stakes: false
+                  })
+                }
+              }
+            ]
+          }
+        };
+      }
+
+      if (isSelfCheckPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ score: 5, reason: "confident" }) } }]
+          }
+        };
+      }
+
+      return {
+        status: 200,
+        data: {
+          id: "chatcmpl-rate-limit",
+          object: "chat.completion",
+          created: 1,
+          choices: [{ message: { role: "assistant", content: "hello" } }],
+          usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 }
+        }
+      };
+    }, async () => {
+      const authHeaders = { authorization: "Bearer rate-limit-test-key" };
+      const first = await requestJson(port, {
+        method: "POST",
+        path: "/v1/chat/completions",
+        headers: authHeaders,
+        body: {
+          stream: false,
+          messages: [{ role: "user", content: "Say hello." }]
+        }
+      });
+
+      assert.equal(first.status, 200);
+      assert.equal(first.headers["x-ratelimit-limit"], "1");
+      assert.equal(first.headers["x-ratelimit-remaining"], "0");
+
+      const callsAfterFirst = axiosCalls;
+      const second = await requestJson(port, {
+        method: "POST",
+        path: "/v1/chat/completions",
+        headers: authHeaders,
+        body: {
+          stream: false,
+          messages: [{ role: "user", content: "Say hello again." }]
+        }
+      });
+
+      assert.equal(second.status, 429);
+      assert.equal(second.body.error.type, "rate_limit_error");
+      assert.equal(second.body.error.code, "rate_limit_exceeded");
+      assert.match(String(second.headers["retry-after"] || ""), /^[0-9]+$/);
+      assert.equal(axiosCalls, callsAfterFirst);
+    });
   } finally {
     server.close();
   }
@@ -234,6 +370,73 @@ test("non-stream responses include routing metadata headers", { concurrency: fal
   }
 });
 
+test("non-stream standard planning route uses MiniMax M2.5 headers", { concurrency: false }, async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    await withAxiosStub(async (url, payload, options) => {
+      if (isClassifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    category: "planning",
+                    complexity: "standard",
+                    confidence: 5,
+                    reason: "multi-step planning request",
+                    matched_signals: ["plan"],
+                    high_stakes: false
+                  })
+                }
+              }
+            ]
+          }
+        };
+      }
+
+      if (isSelfCheckPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ score: 5, reason: "confident" }) } }]
+          }
+        };
+      }
+
+      return {
+        status: 200,
+        data: {
+          id: "chatcmpl-planning",
+          object: "chat.completion",
+          created: 1,
+          choices: [{ message: { role: "assistant", content: "Plan drafted." } }],
+          usage: { prompt_tokens: 30, completion_tokens: 20, total_tokens: 50 }
+        }
+      };
+    }, async () => {
+      const response = await requestJson(port, {
+        method: "POST",
+        path: "/v1/chat/completions",
+        body: {
+          stream: false,
+          messages: [{ role: "user", content: "Create a two-week launch plan for this feature." }]
+        }
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["x-astrolabe-category"], "planning");
+      assert.equal(response.headers["x-astrolabe-initial-model"], "minimax/minimax-m2.5");
+      assert.equal(response.headers["x-astrolabe-final-model"], "minimax/minimax-m2.5");
+      assert.equal(response.body.choices[0].message.content, "Plan drafted.");
+    });
+  } finally {
+    server.close();
+  }
+});
+
 test("route retries next model when first routed model is unavailable", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
@@ -284,7 +487,7 @@ test("route retries next model when first routed model is unavailable", { concur
           }
         };
       }
-      if (payload.model === "google/gemini-3-flash") {
+      if (payload.model === "x-ai/grok-4.1-fast") {
         return {
           status: 200,
           data: {
@@ -308,10 +511,102 @@ test("route retries next model when first routed model is unavailable", { concur
       });
 
       assert.equal(response.status, 200);
-      assert.deepEqual(routedModelAttempts.slice(0, 2), ["openai/gpt-5-nano", "google/gemini-3-flash"]);
-      assert.equal(response.headers["x-astrolabe-initial-model"], "google/gemini-3-flash");
-      assert.equal(response.headers["x-astrolabe-final-model"], "google/gemini-3-flash");
+      assert.deepEqual(routedModelAttempts.slice(0, 2), ["openai/gpt-5-nano", "x-ai/grok-4.1-fast"]);
+      assert.equal(response.headers["x-astrolabe-initial-model"], "x-ai/grok-4.1-fast");
+      assert.equal(response.headers["x-astrolabe-final-model"], "x-ai/grok-4.1-fast");
       assert.equal(response.body.choices[0].message.content, "Fallback succeeded.");
+    });
+  } finally {
+    server.close();
+  }
+});
+
+test("multimodal route retries only multimodal-capable fallbacks first", { concurrency: false }, async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const routedModelAttempts = [];
+
+    await withAxiosStub(async (url, payload, options) => {
+      if (isClassifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    category: "summarization",
+                    complexity: "standard",
+                    confidence: 5,
+                    reason: "multimodal summarization",
+                    matched_signals: ["summarize"],
+                    high_stakes: false
+                  })
+                }
+              }
+            ]
+          }
+        };
+      }
+
+      if (isSelfCheckPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ score: 5, reason: "confident" }) } }]
+          }
+        };
+      }
+
+      routedModelAttempts.push(payload.model);
+      if (payload.model === "moonshotai/kimi-k2.5") {
+        return {
+          status: 404,
+          data: {
+            error: {
+              code: "model_not_found",
+              message: "Model unavailable."
+            }
+          }
+        };
+      }
+      if (payload.model === "google/gemini-3.1-pro-preview") {
+        return {
+          status: 200,
+          data: {
+            id: "chatcmpl-multimodal-fallback",
+            object: "chat.completion",
+            created: 1,
+            choices: [{ message: { role: "assistant", content: "Multimodal fallback succeeded." } }],
+            usage: { prompt_tokens: 14, completion_tokens: 7, total_tokens: 21 }
+          }
+        };
+      }
+      throw new Error(`Unexpected multimodal fallback call: ${payload.model}`);
+    }, async () => {
+      const response = await requestJson(port, {
+        method: "POST",
+        path: "/v1/chat/completions",
+        body: {
+          stream: false,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Summarize this screenshot." },
+                { type: "image_url", image_url: { url: "https://example.com/image.png" } }
+              ]
+            }
+          ]
+        }
+      });
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(routedModelAttempts.slice(0, 2), ["moonshotai/kimi-k2.5", "google/gemini-3.1-pro-preview"]);
+      assert.equal(response.headers["x-astrolabe-initial-model"], "google/gemini-3.1-pro-preview");
+      assert.equal(response.headers["x-astrolabe-final-model"], "google/gemini-3.1-pro-preview");
+      assert.equal(response.body.choices[0].message.content, "Multimodal fallback succeeded.");
     });
   } finally {
     server.close();
