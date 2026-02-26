@@ -1,0 +1,203 @@
+---
+title: "Routing Reference"
+description: "Complete Astrolabe routing tree, guardrails, escalation paths, fallback chains, and config-to-logic mapping."
+---
+
+This page documents Astrolabe routing behavior as implemented in `server.js`.
+
+Last updated: **February 25, 2026**
+
+## End-to-end routing pipeline
+
+For each `POST /v1/chat/completions` request, Astrolabe executes this pipeline:
+
+1. Detect conversation features (`hasToolsDeclared`, `toolMessages`, `hasMultimodal`, approximate tokens, etc.).
+2. Apply inbound auth check and optional request rate limiter (`applyRequestRateLimit`).
+3. Run high-stakes safety gate detection (`detectSafetyGate`).
+4. Classify category/complexity (`classifyRequest`) using:
+   - classifier candidate chain: `CLASSIFIER_MODEL_KEY -> nano -> gemFlash -> grok -> m25 -> kimiK25 -> glm5`
+   - heuristic fallback when classifier output is invalid/unavailable.
+5. Apply routing profile complexity adjustment (`applyRoutingProfile`).
+6. Resolve base category route (`resolveCategoryRoute`).
+7. Apply cost guardrails (`applyCostGuardrails`), including strict target routing when enabled.
+8. Build candidate model list (`buildCandidatesForRoute`) with modality-aware fallback behavior.
+9. Execute upstream request with retryable fallback (`callWithModelCandidates`).
+10. If non-streaming and not forced-model mode, run self-check (`runSelfCheck`) using:
+   - self-check candidate chain: `SELF_CHECK_MODEL_KEY -> nano -> gemFlash -> grok -> m25 -> kimiK25 -> glm5`
+11. If low confidence and escalation conditions are met, escalate once (`buildEscalationTarget`) and re-run.
+12. Return response with routing headers (`x-astrolabe-*`).
+
+Forced-model mode (`ASTROLABE_FORCE_MODEL`) bypasses classifier routing and self-check escalation.
+
+## Base route matrix (before cost guardrails)
+
+| Category | Simple | Standard | Complex | Critical |
+| --- | --- | --- | --- | --- |
+| `heartbeat` | `nano` | `grok` | `m25` | `m25` |
+| `core_loop` | `grok` | `m25` | `m25` | `opus` |
+| `retrieval` | `nano` | `m25` | `m25` | `opus` |
+| `summarization` | `nano` | `m25` | `gem31Pro` | `opus` |
+| `planning` | `grok` | `m25` | `m25` | `opus` |
+| `orchestration` | `grok` | `m25` | `m25` | `opus` |
+| `coding` | `dsCoder` | `m25` | `m25` | `opus` |
+| `research` | `grok` | `m25` | `m25` | `opus` |
+| `creative` | `grok` | `m25` | `m25` | `opus` |
+| `communication` | `grok` | `m25` | `m25` | `opus` |
+| `reflection` | `grok` | `m25` | `m25` | `opus` |
+| `high_stakes` | `opus` (or `sonnet` floor only when `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR=true` and `ASTROLABE_ROUTING_PROFILE=budget`) | same as simple | same as simple | same as simple |
+
+## Routing profile adjustment
+
+`applyRoutingProfile` adjusts complexity before route matrix lookup:
+
+| `ASTROLABE_ROUTING_PROFILE` | Adjustment rule |
+| --- | --- |
+| `quality` | Shift complexity up by one step (`simple -> standard -> complex -> critical`) |
+| `balanced` | No complexity shift |
+| `budget` | Shift complexity down by one step only for lower-risk categories (injection risk below `MEDIUM-HIGH`) |
+
+In current policy, budget downshift can apply to categories like `heartbeat`, `summarization`, `creative`, `communication`, `reflection`, but not high-risk categories such as `core_loop`, `orchestration`, `coding`, `high_stakes`.
+
+## Strict guardrail rules (`ASTROLABE_COST_EFFICIENCY_MODE=strict`)
+
+| Scope | Condition | Target model | Rule intent |
+| --- | --- | --- | --- |
+| Onboarding/social text | `isOnboardingLikeRequest` and no tools | `grok` | Keep setup/chit-chat on budget model |
+| `standard` + multimodal | `hasMultimodal=true` | `kimiK25` | Multimodal specialist default |
+| `complex/critical` + multimodal | `hasMultimodal=true` and `approxTokens < 30000` | `kimiK25` | Multimodal specialist default |
+| `complex/critical` + multimodal very long | `hasMultimodal=true` and `approxTokens >= 30000` | `gem31Pro` | Very-long-context multimodal specialist |
+| `standard` light tool core loop/orchestration | category in `core_loop`/`orchestration`, tools present, `approxTokens <= 3000`, `toolMessages <= 2` | `grok` | Cheap route for light tool-use |
+| `coding` specialist promotion | category `coding`, `approxTokens >= 8000`, architecture signal regex match | `glm5` | Large-context architecture-heavy coding |
+| `research/planning/reflection` specialist promotion | category in `research/planning/reflection`, `approxTokens >= 12000`, deep-analysis signal regex match | `glm5` | Deep comparative/citation-heavy analysis |
+| `complex` non-specialist | no multimodal/specialist trigger | `m25` | Complex text default |
+| `critical` non-high-stakes non-specialist | no multimodal/specialist trigger | `m25` | Cap critical non-high-stakes away from direct `opus` |
+| Simple `heartbeat` | category `heartbeat` | `nano` | Pin routine heartbeat |
+| Simple `retrieval` | category `retrieval` | `nano` | Pin routine lookup |
+| Simple `summarization` text-only | category `summarization`, no multimodal | `nano` | Pin routine short summarization |
+| Simple `summarization` multimodal | category `summarization`, multimodal | `kimiK25` | Routine multimodal summarization |
+| Simple `coding` | category `coding`; if tool chatter then `grok`, else `dsCoder` | `dsCoder` or `grok` | Cheap coding starter |
+| Other simple categories | all other simple non-high-stakes | `grok` | Default strict budget model |
+
+## Premium blocking rules
+
+When `ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS=false` for non-high-stakes:
+
+1. Direct `opus` routes are downgraded:
+   - if adjusted complexity is `critical`: downgrade to value tier (`m25`)
+   - otherwise: downgrade to `grok`
+2. Direct `sonnet` routes are downgraded to `grok` when:
+   - adjusted complexity is `simple` or `standard`, or
+   - strict mode + short prompt + no tools + no long context + no multimodal.
+3. Strict mode only: `gem31Pro` can be downgraded to `grok` for short, non-tool, non-multimodal conversational requests.
+
+## Fallback chains
+
+Astrolabe first tries the selected route model, then falls back by key order:
+
+```js
+const MODEL_FALLBACKS = {
+  nano: ["grok", "m25", "dsCoder", "kimiK25", "glm5", "gemFlash", "sonnet"],
+  dsCoder: ["grok", "m25", "glm5", "kimiK25", "gemFlash", "sonnet"],
+  gemFlash: ["grok", "m25", "kimiK25", "glm5", "sonnet", "opus"],
+  grok: ["nano", "m25", "kimiK25", "glm5", "gemFlash", "sonnet"],
+  gem31Pro: ["kimiK25", "grok", "m25", "glm5", "sonnet", "opus"],
+  m25: ["glm5", "kimiK25", "sonnet", "gem31Pro", "grok", "opus"],
+  kimiK25: ["gem31Pro", "grok", "nano", "m25", "sonnet", "opus"],
+  glm5: ["m25", "grok", "kimiK25", "gem31Pro", "sonnet", "opus"],
+  sonnet: ["m25", "glm5", "kimiK25", "grok", "gem31Pro", "opus"],
+  opus: ["sonnet", "m25", "glm5", "kimiK25"]
+};
+```
+
+When `hasMultimodal=true`, Astrolabe restricts to this multimodal-safe subset:
+
+```js
+const MULTIMODAL_FALLBACK_KEYS = ["kimiK25", "gem31Pro", "grok", "nano", "sonnet", "opus"];
+```
+
+## Escalation logic
+
+Self-check escalation is one-step maximum.
+
+### Escalate decision (`shouldEscalateFromSelfCheck`)
+
+1. Never escalate when forced model is active.
+2. Never escalate when score `>= 4`.
+3. Always escalate when score `<= 1`.
+4. Always escalate for `high_stakes` category.
+5. In strict mode, escalate for `complex`/`critical` even when score is 2-3.
+
+### Escalation target (`buildEscalationTarget`)
+
+Default path map:
+
+```js
+const ESCALATION_PATH = {
+  nano: "grok",
+  dsCoder: "m25",
+  gemFlash: "grok",
+  grok: "m25",
+  gem31Pro: "m25",
+  m25: "sonnet",
+  kimiK25: "sonnet",
+  glm5: "sonnet",
+  sonnet: "opus",
+  opus: null
+};
+```
+
+Category-aware `m25` escalation override (`m25EscalationTarget`):
+
+1. Multimodal: `m25 -> kimiK25`, or `m25 -> gem31Pro` when `approxTokens >= 30000`.
+2. Coding specialist condition: `m25 -> glm5` when `coding` + `approxTokens >= 8000` + architecture signals.
+3. Research/planning/reflection specialist condition: `m25 -> glm5` when `approxTokens >= 12000` + deep-analysis signals.
+4. Otherwise: `m25 -> sonnet`.
+
+High-confidence failure shortcut:
+
+1. If score `<= 1`, non-strict modes jump to `opus`.
+2. Strict mode keeps non-high-stakes and non-critical escalation cost-aware (`m25`/specialist path) before premium.
+
+## Config-to-logic map
+
+| Variable | Affects Stage | Default | Effect | Interactions |
+| --- | --- | --- | --- | --- |
+| `ASTROLABE_ROUTING_PROFILE` | Complexity adjustment | `budget` | Applies `budget`/`balanced`/`quality` complexity shift | Interacts with category injection-risk gates |
+| `ASTROLABE_COST_EFFICIENCY_MODE` | Guardrail layer + escalation strictness | `strict` | Controls strict target routing and strict escalation posture | `off` bypasses guardrails; strict enables threshold rules |
+| `ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS` | Guardrail premium-block layer | `false` | Blocks direct non-high-stakes `sonnet`/`opus` starts | Works after base route and strict targeting |
+| `ASTROLABE_ENABLE_SAFETY_GATE` | Safety pre-classification | `true` | Enables/disables high-stakes signal trigger path | If disabled, high-stakes depends on classifier/heuristics only |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | High-stakes execution safety | `prompt` | `prompt` injects policy, `strict` requires confirmation token, `off` disables confirm handling | Uses `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` in strict mode |
+| `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | High-stakes confirmation check | `confirm` | Required literal token in header/body when strict mode is active | Ignored unless confirm mode is `strict` |
+| `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR` | High-stakes base route | `false` | Allows `sonnet` floor instead of always `opus` in budget profile | Requires `ASTROLABE_ROUTING_PROFILE=budget` |
+| `ASTROLABE_CLASSIFIER_MODEL_KEY` | Classification model selection | `nano` | Preferred classifier model key; fallback chain still applies | Unknown keys are skipped; built-in chain remains |
+| `ASTROLABE_SELF_CHECK_MODEL_KEY` | Self-check model selection | `nano` | Preferred self-check model key; fallback chain still applies | Unknown keys are skipped; built-in chain remains |
+| `ASTROLABE_CONTEXT_MESSAGES` | Classifier context construction | `8` | Max recent messages included in classifier prompt | Clamped to `3-20` |
+| `ASTROLABE_CONTEXT_CHARS` | Classifier context construction | `2500` | Max recent context characters for classifier prompt | Clamped to `600-12000` |
+| `ASTROLABE_RATE_LIMIT_ENABLED` | Request admission gate | `false` | Enables in-memory request limiter for chat completions endpoint | If enabled, over-budget requests return `429 rate_limit_exceeded` |
+| `ASTROLABE_RATE_LIMIT_WINDOW_MS` | Request admission gate | `60000` | Rate-limit window duration in ms | Clamped to `1000-3600000` |
+| `ASTROLABE_RATE_LIMIT_MAX_REQUESTS` | Request admission gate | `120` | Max requests per key inside each window | Clamped to `1-100000` |
+| `ASTROLABE_FORCE_MODEL` | Full routing override | empty | Bypasses routing/classifier/escalation and pins one upstream model id | Sets initial/final model to forced id |
+
+## Worked examples
+
+1. **Simple retrieval**
+   - Input shape: short "find X" lookup, no tools, no multimodal.
+   - Outcome: `retrieval/simple -> nano` (strict guardrail keeps `nano`).
+2. **Standard planning, text-only**
+   - Input shape: multi-step planning request, no multimodal.
+   - Outcome: `planning/standard -> m25`.
+3. **Standard core loop with light tools**
+   - Input shape: tool-enabled core loop, &lt;=2 tool messages, &lt;=3000 tokens.
+   - Outcome: base route `m25`, strict guardrail retargets to `grok`.
+4. **Complex multimodal long context**
+   - Input shape: multimodal request with approx context &gt;=30000 tokens.
+   - Outcome: strict multimodal rule promotes to `gem31Pro` (instead of `kimiK25`).
+5. **High-stakes critical action**
+   - Input shape: transfer/delete/legal-action intent with strong safety signals.
+   - Outcome: category forced to `high_stakes` and routed to `opus` (or `sonnet` floor only if budget-floor override is enabled); strict confirm mode can require explicit token.
+
+## Related pages
+
+- [How Astrolabe Works](/how-it-works)
+- [Configuration](/configuration)
+- [Model Roster Reference](/model-roster)

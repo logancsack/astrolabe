@@ -47,13 +47,16 @@ const SELF_CHECK_MODEL_KEY = String(process.env.ASTROLABE_SELF_CHECK_MODEL_KEY |
   .toLowerCase();
 const CLASSIFIER_CONTEXT_MESSAGES = clampInt(process.env.ASTROLABE_CONTEXT_MESSAGES, 8, 3, 20);
 const CLASSIFIER_CONTEXT_CHARS = clampInt(process.env.ASTROLABE_CONTEXT_CHARS, 2500, 600, 12000);
+const RATE_LIMIT_ENABLED = envFlag("ASTROLABE_RATE_LIMIT_ENABLED", false);
+const RATE_LIMIT_WINDOW_MS = clampInt(process.env.ASTROLABE_RATE_LIMIT_WINDOW_MS, 60_000, 1_000, 3_600_000);
+const RATE_LIMIT_MAX_REQUESTS = clampInt(process.env.ASTROLABE_RATE_LIMIT_MAX_REQUESTS, 120, 1, 100_000);
 
 const MODELS = {
   opus: {
     id: "anthropic/claude-opus-4.6",
     short: "Opus 4.6",
-    inputCost: 15,
-    outputCost: 75,
+    inputCost: 5,
+    outputCost: 25,
     tier: "PREMIUM"
   },
   sonnet: {
@@ -62,6 +65,13 @@ const MODELS = {
     inputCost: 3,
     outputCost: 15,
     tier: "STANDARD"
+  },
+  m25: {
+    id: "minimax/minimax-m2.5",
+    short: "MiniMax M2.5",
+    inputCost: 0.3,
+    outputCost: 1.1,
+    tier: "VALUE"
   },
   kimiK25: {
     id: "moonshotai/kimi-k2.5",
@@ -92,18 +102,18 @@ const MODELS = {
     tier: "ULTRA-CHEAP"
   },
   dsCoder: {
-    id: "deepseek/deepseek-v3.2-coder",
-    short: "DS V3.2 Coder",
-    inputCost: 0.1,
-    outputCost: 0.3,
+    id: "deepseek/deepseek-v3.2",
+    short: "DeepSeek V3.2",
+    inputCost: 0.25,
+    outputCost: 0.4,
     tier: "ULTRA-CHEAP"
   },
   gemFlash: {
-    id: "google/gemini-3-flash",
-    short: "Gemini 3 Flash",
-    inputCost: 0.05,
-    outputCost: 0.2,
-    tier: "ULTRA-CHEAP"
+    id: "google/gemini-3-flash-preview",
+    short: "Gemini 3 Flash Preview",
+    inputCost: 0.5,
+    outputCost: 3,
+    tier: "MID-TIER"
   },
   gem31Pro: {
     id: "google/gemini-3.1-pro-preview",
@@ -209,28 +219,32 @@ const CATEGORY_IDS = CATEGORY_POLICIES.map((category) => category.id);
 const COMPLEXITY_ORDER = ["simple", "standard", "complex", "critical"];
 
 const MODEL_FALLBACKS = {
-  nano: ["gemFlash", "grok", "kimiK25", "glm5", "sonnet"],
-  dsCoder: ["gemFlash", "grok", "glm5", "kimiK25", "sonnet"],
-  gemFlash: ["nano", "grok", "kimiK25", "glm5", "sonnet"],
-  grok: ["gemFlash", "nano", "kimiK25", "glm5", "sonnet"],
-  gem31Pro: ["glm5", "kimiK25", "sonnet", "grok", "opus"],
-  kimiK25: ["glm5", "sonnet", "gem31Pro", "grok", "opus"],
-  glm5: ["kimiK25", "sonnet", "gem31Pro", "grok", "opus"],
-  sonnet: ["glm5", "kimiK25", "grok", "gem31Pro", "opus"],
-  opus: ["sonnet", "glm5", "kimiK25"]
+  nano: ["grok", "m25", "dsCoder", "kimiK25", "glm5", "gemFlash", "sonnet"],
+  dsCoder: ["grok", "m25", "glm5", "kimiK25", "gemFlash", "sonnet"],
+  gemFlash: ["grok", "m25", "kimiK25", "glm5", "sonnet", "opus"],
+  grok: ["nano", "m25", "kimiK25", "glm5", "gemFlash", "sonnet"],
+  gem31Pro: ["kimiK25", "grok", "m25", "glm5", "sonnet", "opus"],
+  m25: ["glm5", "kimiK25", "sonnet", "gem31Pro", "grok", "opus"],
+  kimiK25: ["gem31Pro", "grok", "nano", "m25", "sonnet", "opus"],
+  glm5: ["m25", "grok", "kimiK25", "gem31Pro", "sonnet", "opus"],
+  sonnet: ["m25", "glm5", "kimiK25", "grok", "gem31Pro", "opus"],
+  opus: ["sonnet", "m25", "glm5", "kimiK25"]
 };
 
 const ESCALATION_PATH = {
   nano: "grok",
-  dsCoder: "glm5",
+  dsCoder: "m25",
   gemFlash: "grok",
-  grok: "kimiK25",
-  gem31Pro: "glm5",
+  grok: "m25",
+  gem31Pro: "m25",
+  m25: "sonnet",
   kimiK25: "sonnet",
   glm5: "sonnet",
   sonnet: "opus",
   opus: null
 };
+
+const MULTIMODAL_FALLBACK_KEYS = ["kimiK25", "gem31Pro", "grok", "nano", "sonnet", "opus"];
 
 const HIGH_STAKES_ACTION_REGEX = /\b(transfer|wire|send money|payment|pay|purchase|buy|sell|contract sign|approve|delete|erase|reset password|share pii|submit legal)\b/i;
 const HIGH_STAKES_SYNONYMS = [
@@ -248,6 +262,10 @@ const HIGH_STAKES_WEAK_SIGNALS = new Set(["invoice", "contract", "legal", "healt
 
 const ONBOARDING_CHAT_REGEX = /\b(name|call me|my name is|nickname|introduce|introduction|setup|set up|persona|profile|roleplay|character|identity|who are you)\b/i;
 const CASUAL_CHAT_REGEX = /\b(hello|hi|hey|thanks|thank you|good morning|good evening|nice to meet|how are you)\b/i;
+const ARCHITECTURE_SIGNAL_REGEX =
+  /\b(architecture|architect|system design|design doc|scalability|migrate|migration|distributed|service boundaries|module boundaries|codebase[-\s]?wide)\b/i;
+const DEEP_ANALYSIS_SIGNAL_REGEX =
+  /\b(deep[-\s]?analysis|deep[-\s]?dive|citation|citations|cite|sources?|comparison|compare|comparative|competitive|literature|benchmark|trade[-\s]?off|synthesize)\b/i;
 
 const HIGH_STAKES_POLICY_PROMPT = [
   "[ASTROLABE_HIGH_STAKES_POLICY]",
@@ -287,6 +305,10 @@ const SELF_CHECK_PROMPT = [
 const app = express();
 app.use(express.json({ limit: "4mb" }));
 
+const rateLimitBuckets = new Map();
+let lastRateLimitCleanupAt = 0;
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 30_000;
+
 function envFlag(name, defaultValue = false) {
   const raw = process.env[name];
   if (raw == null || raw === "") return defaultValue;
@@ -322,6 +344,60 @@ function extractInboundApiKey(req) {
   const authHeader = String(req.headers.authorization || "");
   if (authHeader.toLowerCase().startsWith("bearer ")) return authHeader.slice(7).trim();
   return String(req.headers["x-api-key"] || "").trim();
+}
+
+function maybeCleanupRateLimitBuckets(now) {
+  if (now - lastRateLimitCleanupAt < RATE_LIMIT_CLEANUP_INTERVAL_MS) return;
+  lastRateLimitCleanupAt = now;
+
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    if (!bucket || Number(bucket.resetAt || 0) <= now) {
+      rateLimitBuckets.delete(key);
+    }
+  }
+}
+
+function rateLimitKeyForRequest(req) {
+  const inboundKey = extractInboundApiKey(req);
+  if (inboundKey) return `api_key:${inboundKey}`;
+  const remote = String(req.socket?.remoteAddress || req.ip || "unknown").trim();
+  return `ip:${remote || "unknown"}`;
+}
+
+function applyRequestRateLimit(req, res, next) {
+  if (!RATE_LIMIT_ENABLED) return next();
+
+  const now = Date.now();
+  maybeCleanupRateLimitBuckets(now);
+
+  const key = rateLimitKeyForRequest(req);
+  let bucket = rateLimitBuckets.get(key);
+  if (!bucket || Number(bucket.resetAt || 0) <= now) {
+    bucket = {
+      count: 0,
+      resetAt: now + RATE_LIMIT_WINDOW_MS
+    };
+    rateLimitBuckets.set(key, bucket);
+  }
+
+  bucket.count += 1;
+
+  const remaining = Math.max(0, RATE_LIMIT_MAX_REQUESTS - bucket.count);
+  res.setHeader("x-ratelimit-limit", String(RATE_LIMIT_MAX_REQUESTS));
+  res.setHeader("x-ratelimit-remaining", String(remaining));
+  res.setHeader("x-ratelimit-reset", String(Math.ceil(bucket.resetAt / 1000)));
+
+  if (bucket.count <= RATE_LIMIT_MAX_REQUESTS) return next();
+
+  const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+  res.setHeader("retry-after", String(retryAfterSeconds));
+  return res.status(429).json({
+    error: {
+      message: "Rate limit exceeded. Try again later.",
+      type: "rate_limit_error",
+      code: "rate_limit_exceeded"
+    }
+  });
 }
 
 app.use((req, res, next) => {
@@ -479,6 +555,14 @@ function collectMatchedSignals(text, signals) {
 
 function dedupe(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function hasArchitectureSignals(text) {
+  return ARCHITECTURE_SIGNAL_REGEX.test(String(text || ""));
+}
+
+function hasDeepAnalysisSignals(text) {
+  return DEEP_ANALYSIS_SIGNAL_REGEX.test(String(text || ""));
 }
 
 function extractFirstJsonObject(rawText) {
@@ -836,11 +920,18 @@ function buildCandidatesFromKeys(keys) {
   return candidates;
 }
 
-function buildCandidatesForRoute(routeDecision) {
+function buildCandidatesForRoute(routeDecision, features = {}) {
   if (routeDecision.modelId && !routeDecision.modelKey) {
     return [{ modelKey: null, modelId: routeDecision.modelId }];
   }
   if (!routeDecision.modelKey) return [];
+
+  if (Boolean(features?.hasMultimodal)) {
+    const keys = dedupe([routeDecision.modelKey, ...MULTIMODAL_FALLBACK_KEYS]).filter((key) =>
+      MULTIMODAL_FALLBACK_KEYS.includes(key)
+    );
+    return buildCandidatesFromKeys(keys);
+  }
 
   const keys = [routeDecision.modelKey, ...(MODEL_FALLBACKS[routeDecision.modelKey] || [])];
   return buildCandidatesFromKeys(keys);
@@ -906,6 +997,7 @@ async function classifyRequest(lastUserMessage, recentContext, features, safetyG
     "nano",
     "gemFlash",
     "grok",
+    "m25",
     "kimiK25",
     "glm5"
   ]);
@@ -971,69 +1063,59 @@ function resolveCategoryRoute(categoryId, complexity) {
   switch (categoryId) {
     case "heartbeat":
       if (complexity === "simple") return route("nano", "DEFAULT", "Simple ping / status");
-      if (complexity === "standard") return route("grok", "ESCALATE", "Context compaction / memory management");
-      return route("glm5", "VALUE", "Complex health diagnostics");
+      if (complexity === "standard") return route("grok", "BUDGET", "Context compaction / memory management");
+      return route("m25", "VALUE", "Complex health diagnostics");
 
     case "core_loop":
       if (complexity === "critical") return route("opus", "ESCALATE", "Ultra-critical / long-horizon planning");
-      if (ROUTING_PROFILE === "budget" && (complexity === "simple" || complexity === "standard")) {
-        return route("grok", "BUDGET", "Budget mode / simple tool calls");
-      }
-      if (complexity === "complex") return route("sonnet", "STANDARD", "Complex tool chain with higher precision needs");
-      return route("kimiK25", "VALUE", "Standard tool call");
+      if (complexity === "simple") return route("grok", "BUDGET", "Simple tool call");
+      return route("m25", "DEFAULT", "Standard and complex tool chains");
 
     case "retrieval":
       if (complexity === "critical") return route("opus", "ESCALATE", "High-stakes retrieval");
       if (complexity === "simple") return route("nano", "DEFAULT", "Simple lookup");
-      if (complexity === "complex") return route("sonnet", "STANDARD", "High-precision synthesis across sources");
-      return route("kimiK25", "VALUE", "Fetch and synthesize across sources");
+      return route("m25", "VALUE", "Fetch and synthesize across sources");
 
     case "summarization":
       if (complexity === "critical") return route("opus", "ESCALATE", "Ultra-critical legal/financial summarization");
       if (complexity === "simple") return route("nano", "DEFAULT", "Short input simple extraction");
       if (complexity === "complex") return route("gem31Pro", "MID-TIER", "Long input or high-precision multimodal extraction");
-      return route("kimiK25", "VALUE", "Medium input or multimodal extraction");
+      return route("m25", "VALUE", "Medium text summarization and extraction");
 
     case "planning":
       if (complexity === "critical") return route("opus", "ESCALATE", "Mission-critical planning");
       if (complexity === "simple") return route("grok", "DEFAULT", "Routine planning");
-      return route("glm5", "VALUE", "Multi-constraint planning");
+      return route("m25", "VALUE", "Multi-constraint planning");
 
     case "orchestration":
       if (complexity === "critical") return route("opus", "ESCALATE", "High-stakes recovery orchestration");
       if (complexity === "simple") return route("grok", "BUDGET", "Simple repetitive orchestration");
-      if (complexity === "complex") return route("sonnet", "STANDARD", "Complex automation chain with high injection risk");
-      return route("kimiK25", "VALUE", "Standard automation chains");
+      return route("m25", "DEFAULT", "Standard and complex automation chains");
 
     case "coding":
       if (complexity === "critical") return route("opus", "ESCALATE", "Large refactors / production-critical");
       if (complexity === "simple") return route("dsCoder", "BUDGET", "Quick script / small fix");
-      if (complexity === "complex") return route("sonnet", "STANDARD", "Production-grade review or safety-sensitive refactor");
-      return route("glm5", "VALUE", "Standard feature implementation / debugging");
+      return route("m25", "DEFAULT", "Standard and complex feature implementation / debugging");
 
     case "research":
       if (complexity === "critical") return route("opus", "ESCALATE", "Ultra-high-stakes synthesis");
-      if (complexity === "complex") return route("sonnet", "STANDARD", "Deep analysis with citations");
-      if (complexity === "simple") return route("gem31Pro", "BUDGET", "Long-context or multimodal research synthesis");
-      return route("glm5", "VALUE", "Text-heavy synthesis and comparative analysis");
+      if (complexity === "simple") return route("grok", "DEFAULT", "Routine research and lightweight analysis");
+      return route("m25", "DEFAULT", "Deep text-heavy synthesis and comparative analysis");
 
     case "creative":
       if (complexity === "critical") return route("opus", "ESCALATE", "Professional long-form creative campaigns");
       if (complexity === "simple") return route("grok", "DEFAULT", "Brainstorming and playful ideation");
-      if (complexity === "complex") return route("sonnet", "STANDARD", "High-precision style and brand consistency");
-      return route("kimiK25", "VALUE", "High-quality style adherence");
+      return route("m25", "VALUE", "High-quality style adherence");
 
     case "communication":
       if (complexity === "critical") return route("opus", "ESCALATE", "Sensitive negotiation / legal / crisis messaging");
       if (complexity === "simple") return route("grok", "DEFAULT", "Casual messaging");
-      if (complexity === "complex") return route("sonnet", "STANDARD", "Delicate communication requiring maximum precision");
-      return route("kimiK25", "VALUE", "Professional communication");
+      return route("m25", "VALUE", "Professional communication");
 
     case "reflection":
       if (complexity === "critical") return route("opus", "ESCALATE", "Critical stuck-state recovery");
       if (complexity === "simple") return route("grok", "DEFAULT", "Routine reflection");
-      if (complexity === "complex") return route("sonnet", "STANDARD", "Serious failure analysis with high confidence requirements");
-      return route("glm5", "VALUE", "Serious failure analysis");
+      return route("m25", "VALUE", "Serious failure analysis");
 
     case "high_stakes":
       if (ALLOW_HIGH_STAKES_BUDGET_FLOOR && ROUTING_PROFILE === "budget") {
@@ -1042,7 +1124,7 @@ function resolveCategoryRoute(categoryId, complexity) {
       return route("opus", "ALWAYS", "Safety gate hard-route");
 
     default:
-      return route("kimiK25", "VALUE", "Unknown category fallback");
+      return route("m25", "VALUE", "Unknown category fallback");
   }
 }
 
@@ -1059,82 +1141,111 @@ function withRoutedModel(routeDecision, modelKey, label, guardrailReason) {
 }
 
 function valueTierModelForCategory(categoryId) {
-  if (["heartbeat", "planning", "coding", "research", "reflection"].includes(categoryId)) return "glm5";
-  return "kimiK25";
+  return "m25";
 }
 
 function strictBudgetTarget(routeDecision, features = {}) {
   const categoryId = routeDecision?.categoryId || "communication";
   const complexity = routeDecision?.adjustedComplexity || routeDecision?.complexity || "standard";
   const hasTools = Boolean(features.hasToolsDeclared) || Number(features.toolMessages || 0) > 0;
+  const toolMessages = Number(features.toolMessages || 0);
   const hasMultimodal = Boolean(features.hasMultimodal);
   const approxTokens = Number(features.approxTokens || 0);
+  const requestText = normalizeWhitespace(String(features.requestText || ""));
+  const hasArchitectureSignalsInRequest = hasArchitectureSignals(requestText);
+  const hasDeepAnalysisSignalsInRequest = hasDeepAnalysisSignals(requestText);
 
-  // Non-high-stakes traffic never starts directly on Opus in strict mode.
   if (complexity === "critical") {
+    if (hasMultimodal) {
+      if (approxTokens >= 30000) {
+        return {
+          modelKey: "gem31Pro",
+          reason: "critical multimodal requests with very long context use mid-tier multimodal model"
+        };
+      }
+      return {
+        modelKey: "kimiK25",
+        reason: "critical multimodal requests default to multimodal specialist"
+      };
+    }
+    if (categoryId === "coding" && approxTokens >= 8000 && hasArchitectureSignalsInRequest) {
+      return {
+        modelKey: "glm5",
+        reason: "critical large-context coding uses engineering specialist"
+      };
+    }
+    if (
+      ["research", "planning", "reflection"].includes(categoryId) &&
+      approxTokens >= 12000 &&
+      hasDeepAnalysisSignalsInRequest
+    ) {
+      return {
+        modelKey: "glm5",
+        reason: "critical large-context analytical tasks use engineering specialist"
+      };
+    }
     return {
-      modelKey: valueTierModelForCategory(categoryId),
-      reason: "critical non-high-stakes requests are capped at value tier"
+      modelKey: "m25",
+      reason: "critical non-high-stakes requests are capped at M2.5"
     };
   }
 
   if (complexity === "complex") {
-    if (categoryId === "coding") {
-      if (hasTools || hasMultimodal || approxTokens >= 3800) {
+    if (hasMultimodal) {
+      if (approxTokens >= 30000) {
         return {
           modelKey: "gem31Pro",
-          reason: "complex coding with tools/long context uses mid-tier model first"
-        };
-      }
-      return {
-        modelKey: "glm5",
-        reason: "complex coding defaults to value engineering tier"
-      };
-    }
-
-    if (categoryId === "research") {
-      if (hasMultimodal || approxTokens >= 5200) {
-        return {
-          modelKey: "gem31Pro",
-          reason: "long-context or multimodal analysis starts on mid-tier model"
-        };
-      }
-      return {
-        modelKey: "glm5",
-        reason: "complex text-heavy analysis defaults to value reasoning tier"
-      };
-    }
-
-    if (categoryId === "summarization") {
-      if (hasMultimodal || approxTokens >= 5200) {
-        return {
-          modelKey: "gem31Pro",
-          reason: "long-context or multimodal summarization starts on mid-tier model"
+          reason: "complex multimodal requests with very long context use mid-tier multimodal model"
         };
       }
       return {
         modelKey: "kimiK25",
-        reason: "complex summarization defaults to value multimodal tier"
+        reason: "complex multimodal requests default to multimodal specialist"
       };
     }
-
-    if (["planning", "reflection", "heartbeat"].includes(categoryId)) {
+    if (categoryId === "coding" && approxTokens >= 8000 && hasArchitectureSignalsInRequest) {
       return {
         modelKey: "glm5",
-        reason: "complex planning/diagnostic analysis defaults to value reasoning tier"
+        reason: "complex large-context coding uses engineering specialist"
       };
     }
-
-    if (["core_loop", "retrieval", "orchestration", "creative", "communication"].includes(categoryId)) {
+    if (
+      ["research", "planning", "reflection"].includes(categoryId) &&
+      approxTokens >= 12000 &&
+      hasDeepAnalysisSignalsInRequest
+    ) {
       return {
-        modelKey: "kimiK25",
-        reason: "complex agentic communication workflows default to value agentic tier"
+        modelKey: "glm5",
+        reason: "complex large-context analytical tasks use engineering specialist"
       };
     }
-
     return {
-      modelKey: "grok",
-      reason: "complex non-high-stakes requests default to budget model"
+      modelKey: "m25",
+      reason: "complex non-high-stakes requests default to M2.5"
+    };
+  }
+
+  if (complexity === "standard") {
+    if (hasMultimodal) {
+      return {
+        modelKey: "kimiK25",
+        reason: "standard multimodal requests default to multimodal specialist"
+      };
+    }
+    if (
+      hasTools &&
+      ["core_loop", "orchestration"].includes(categoryId) &&
+      approxTokens <= 3000 &&
+      toolMessages <= 2
+    ) {
+      return {
+        modelKey: "grok",
+        reason: "light tool-use for core loop/orchestration stays on budget model"
+      };
+    }
+    return {
+      modelKey: "m25",
+      reason: "standard non-multimodal requests default to M2.5"
     };
   }
 
@@ -1155,8 +1266,8 @@ function strictBudgetTarget(routeDecision, features = {}) {
   if (categoryId === "summarization") {
     if (hasMultimodal) {
       return {
-        modelKey: "gemFlash",
-        reason: "routine multimodal summarization starts on Gemini Flash"
+        modelKey: "kimiK25",
+        reason: "routine multimodal summarization starts on multimodal specialist"
       };
     }
     return {
@@ -1204,7 +1315,7 @@ function applyCostGuardrails(routeDecision, classification, lastUserMessage, fea
   }
 
   if (COST_EFFICIENCY_MODE === "strict") {
-    const target = strictBudgetTarget(next, features);
+    const target = strictBudgetTarget(next, { ...features, requestText });
     if (target?.modelKey && target.modelKey !== next.modelKey) {
       next = withRoutedModel(next, target.modelKey, "BUDGET_GUARDRAIL", `Cost guardrail strict: ${target.reason}.`);
     }
@@ -1306,7 +1417,31 @@ function shouldEscalateFromSelfCheck(score, routeDecision) {
   return true;
 }
 
-function buildEscalationTarget(modelKey, score, routeDecision = null) {
+function m25EscalationTarget(routeDecision, features = {}) {
+  const categoryId = routeDecision?.categoryId || "communication";
+  const approxTokens = Number(features?.approxTokens || 0);
+  const requestText = normalizeWhitespace(String(features?.requestText || ""));
+
+  if (Boolean(features?.hasMultimodal)) {
+    return approxTokens >= 30000 ? "gem31Pro" : "kimiK25";
+  }
+
+  if (categoryId === "coding" && approxTokens >= 8000 && hasArchitectureSignals(requestText)) {
+    return "glm5";
+  }
+
+  if (
+    ["research", "planning", "reflection"].includes(categoryId) &&
+    approxTokens >= 12000 &&
+    hasDeepAnalysisSignals(requestText)
+  ) {
+    return "glm5";
+  }
+
+  return "sonnet";
+}
+
+function buildEscalationTarget(modelKey, score, routeDecision = null, features = {}) {
   if (FORCE_MODEL_ID || routeDecision?.label === "FORCED") return null;
   if (score >= 4) return null;
   if (modelKey === "opus") return null;
@@ -1316,12 +1451,14 @@ function buildEscalationTarget(modelKey, score, routeDecision = null) {
       routeDecision?.categoryId !== "high_stakes" &&
       routeDecision?.adjustedComplexity !== "critical"
     ) {
-      if (!modelKey) return "kimiK25";
-      return ESCALATION_PATH[modelKey] || "kimiK25";
+      if (!modelKey) return "m25";
+      if (modelKey === "m25") return m25EscalationTarget(routeDecision, features);
+      return ESCALATION_PATH[modelKey] || "m25";
     }
     return "opus";
   }
   if (!modelKey) return "opus";
+  if (modelKey === "m25") return m25EscalationTarget(routeDecision, features);
   return ESCALATION_PATH[modelKey] || "opus";
 }
 
@@ -1331,6 +1468,7 @@ async function runSelfCheck(lastUserMessage, assistantText) {
     "nano",
     "gemFlash",
     "grok",
+    "m25",
     "kimiK25",
     "glm5"
   ]);
@@ -1431,11 +1569,14 @@ app.get("/health", (req, res) => {
     routing_profile: ROUTING_PROFILE,
     cost_efficiency_mode: COST_EFFICIENCY_MODE,
     allow_direct_premium_models: ALLOW_DIRECT_PREMIUM_MODELS,
-    safety_gate: ENABLE_SAFETY_GATE
+    safety_gate: ENABLE_SAFETY_GATE,
+    rate_limit_enabled: RATE_LIMIT_ENABLED,
+    rate_limit_window_ms: RATE_LIMIT_WINDOW_MS,
+    rate_limit_max_requests: RATE_LIMIT_MAX_REQUESTS
   });
 });
 
-app.post("/v1/chat/completions", async (req, res) => {
+app.post("/v1/chat/completions", applyRequestRateLimit, async (req, res) => {
   const requestId = crypto.randomUUID();
   const startedAt = Date.now();
   let routeDecision = {
@@ -1494,7 +1635,7 @@ app.post("/v1/chat/completions", async (req, res) => {
         : body.messages;
     const basePayload = { ...body, messages: outboundMessages };
 
-    const primaryCandidates = buildCandidatesForRoute(routeDecision);
+    const primaryCandidates = buildCandidatesForRoute(routeDecision, features);
     const primaryCall = await callWithModelCandidates(
       { ...basePayload, stream: streamRequested },
       primaryCandidates,
@@ -1602,7 +1743,10 @@ app.post("/v1/chat/completions", async (req, res) => {
 
     let escalationTarget = null;
     if (shouldEscalateFromSelfCheck(firstSelfCheck.score, routeDecision)) {
-      escalationTarget = buildEscalationTarget(finalModelKey, firstSelfCheck.score, routeDecision);
+      escalationTarget = buildEscalationTarget(finalModelKey, firstSelfCheck.score, routeDecision, {
+        ...features,
+        requestText: lastUserMessage
+      });
     }
     if (routeDecision.categoryId === "high_stakes" && routeDecision.label === "FLOOR" && firstSelfCheck.score < 5) {
       escalationTarget = "opus";
@@ -1611,9 +1755,10 @@ app.post("/v1/chat/completions", async (req, res) => {
     if (escalationTarget && modelIdForKey(escalationTarget) && finalModelKey !== escalationTarget) {
       escalated = true;
       const escalationCandidates = buildCandidatesForRoute({
+        categoryId: routeDecision.categoryId,
         modelKey: escalationTarget,
         modelId: modelIdForKey(escalationTarget)
-      });
+      }, features);
       const escalatedCall = await callWithModelCandidates({ ...basePayload, stream: false }, escalationCandidates, false);
       finalResponse = escalatedCall.result;
       finalModelId = escalatedCall.modelId;
@@ -1674,9 +1819,54 @@ app.post("/v1/chat/completions", async (req, res) => {
   }
 });
 
+app.use((error, req, res, next) => {
+  if (!error) return next();
+  if (res.headersSent) return next(error);
+
+  if (error.type === "entity.parse.failed") {
+    return res.status(400).json({
+      error: {
+        message: "Invalid request: body must be valid JSON.",
+        type: "invalid_request_error",
+        code: "invalid_json"
+      }
+    });
+  }
+
+  if (error.type === "entity.too.large") {
+    return res.status(413).json({
+      error: {
+        message: "Invalid request: payload is too large.",
+        type: "invalid_request_error",
+        code: "payload_too_large"
+      }
+    });
+  }
+
+  const rawStatus = Number(error?.status || error?.statusCode) || 500;
+  const status = rawStatus >= 400 && rawStatus <= 599 ? rawStatus : 500;
+  const type = status >= 500 ? "server_error" : "invalid_request_error";
+  const message = status >= 500 ? "Internal server error." : String(error?.message || "Request failed.");
+
+  return res.status(status).json({
+    error: {
+      message,
+      type,
+      code: error?.code
+    }
+  });
+});
+
 function startServer() {
   if (!OPENROUTER_API_KEY) {
     console.error("Missing OPENROUTER_API_KEY. Set it in your environment and restart.");
+    process.exit(1);
+  }
+  const isProduction = String(process.env.NODE_ENV || "")
+    .trim()
+    .toLowerCase() === "production";
+  if (isProduction && !ASTROLABE_API_KEY) {
+    console.error("Missing ASTROLABE_API_KEY in production. Refusing to start unauthenticated public endpoint.");
     process.exit(1);
   }
   if (!ASTROLABE_API_KEY) {

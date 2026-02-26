@@ -61,12 +61,13 @@ If `ASTROLABE_FORCE_MODEL` is set, classifier/self-check escalation is skipped a
 const MODELS = {
   opus: "anthropic/claude-opus-4.6",
   sonnet: "anthropic/claude-sonnet-4.6",
+  m25: "minimax/minimax-m2.5",
   kimiK25: "moonshotai/kimi-k2.5",
   glm5: "z-ai/glm-5",
   grok: "x-ai/grok-4.1-fast",
   nano: "openai/gpt-5-nano",
-  dsCoder: "deepseek/deepseek-v3.2-coder",
-  gemFlash: "google/gemini-3-flash",
+  dsCoder: "deepseek/deepseek-v3.2",
+  gemFlash: "google/gemini-3-flash-preview",
   gem31Pro: "google/gemini-3.1-pro-preview"
 };
 ```
@@ -74,10 +75,16 @@ const MODELS = {
 Tier intent:
 
 - `ULTRA-CHEAP`: highest throughput and lowest unit cost
-- `BUDGET`: default for many routine paths
-- `VALUE`: stronger quality/capability tier at much lower cost than Sonnet
-- `STANDARD`: higher precision escalation target
+- `BUDGET`: `grok` for conversational and light tool-use paths
+- `VALUE`: `m25` as the primary reasoning/workhorse route for most standard and complex text tasks
+- `VALUE` specialists: `kimiK25` for multimodal-first routes and `glm5` for large-context engineering/text-heavy analysis
+- `MID-TIER`: `gem31Pro` (and `gemFlash` as a conditional fallback/specialist path, not cheap-first routing)
+- `STANDARD`: `sonnet` is escalation-focused (plus optional high-stakes budget-floor mode)
 - `PREMIUM`: high-stakes/safety-critical floor or peak escalation
+
+Multimodal caveat:
+
+- `m25` is treated as text-first in current OpenRouter routing, so multimodal requests are routed to `kimiK25` or `gem31Pro` by policy.
 
 ## Self-check and escalation policy
 
@@ -108,6 +115,19 @@ Copy `.env.example` to `.env` and set at least:
 OPENROUTER_API_KEY=your_real_key_here
 ASTROLABE_API_KEY=your_proxy_secret
 PORT=3000
+```
+
+`ASTROLABE_API_KEY` should be a long random shared secret you control.  
+Use the same value in your client `Authorization: Bearer ...` header (or `x-api-key`).
+
+Generate one:
+
+```bash
+# cross-platform (Node)
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# OpenSSL (macOS/Linux)
+openssl rand -hex 32
 ```
 
 ### 3) Start server
@@ -164,6 +184,11 @@ ASTROLABE_SELF_CHECK_MODEL_KEY=nano
 ASTROLABE_CONTEXT_MESSAGES=8
 ASTROLABE_CONTEXT_CHARS=2500
 
+# optional in-memory request rate limiting
+ASTROLABE_RATE_LIMIT_ENABLED=false
+ASTROLABE_RATE_LIMIT_WINDOW_MS=60000
+ASTROLABE_RATE_LIMIT_MAX_REQUESTS=120
+
 # hard override all routing (full model id)
 # bypasses classifier/self-check escalation and locks initial/final upstream model id
 ASTROLABE_FORCE_MODEL=
@@ -184,7 +209,7 @@ Invalid mode values are normalized to safe defaults (`budget`, `strict`, `prompt
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `OPENROUTER_API_KEY` | Yes | none | Required OpenRouter upstream key |
-| `ASTROLABE_API_KEY` | No (recommended) | empty | Inbound API auth for Astrolabe |
+| `ASTROLABE_API_KEY` | Yes in production (recommended locally) | empty | Inbound API auth for Astrolabe (use a long random shared secret) |
 | `PORT` | No | `3000` | HTTP listen port |
 | `OPENROUTER_SITE_URL` | No | empty | Optional `HTTP-Referer` header for OpenRouter |
 | `OPENROUTER_APP_NAME` | No | empty | Optional `X-Title` header for OpenRouter |
@@ -195,10 +220,13 @@ Invalid mode values are normalized to safe defaults (`budget`, `strict`, `prompt
 | `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | No | `prompt` | High-stakes confirmation policy |
 | `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | No | `confirm` | Confirmation token used in strict high-stakes mode |
 | `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR` | No | `false` | Allow Sonnet floor for high-stakes in budget routing |
-| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | Primary classifier model key (`nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5`) |
-| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | Primary self-check model key (`nano`, `grok`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5`) |
+| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | Primary classifier model key (`nano`, `grok`, `m25`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5`) |
+| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | Primary self-check model key (`nano`, `grok`, `m25`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5`) |
 | `ASTROLABE_CONTEXT_MESSAGES` | No | `8` | Classifier context message bound (`3-20`) |
 | `ASTROLABE_CONTEXT_CHARS` | No | `2500` | Classifier context char bound (`600-12000`) |
+| `ASTROLABE_RATE_LIMIT_ENABLED` | No | `false` | Enable in-memory request rate limiting on `POST /v1/chat/completions` |
+| `ASTROLABE_RATE_LIMIT_WINDOW_MS` | No | `60000` | Rate limit window size in milliseconds (`1000-3600000`) |
+| `ASTROLABE_RATE_LIMIT_MAX_REQUESTS` | No | `120` | Max requests allowed per key per window (`1-100000`) |
 | `ASTROLABE_FORCE_MODEL` | No | empty | Hard override to one model id (no classifier/self-check escalation) |
 
 See [docs/configuration.mdx](docs/configuration.mdx) for full behavior details and preset profiles.
@@ -248,5 +276,7 @@ npm test
    - If `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`, include the exact configured token in header/body
 3. Frequent escalations
    - Increase routing profile quality or tighten category prompts
-4. `est_usd=n/a`
+4. `rate_limit_exceeded`
+   - Increase `ASTROLABE_RATE_LIMIT_MAX_REQUESTS`, enlarge `ASTROLABE_RATE_LIMIT_WINDOW_MS`, or disable limiter (`ASTROLABE_RATE_LIMIT_ENABLED=false`)
+5. `est_usd=n/a`
    - Upstream omitted token usage
