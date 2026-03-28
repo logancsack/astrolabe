@@ -50,8 +50,8 @@ test("heuristic classification keeps generic contract discussion out of critical
 
 test("model registry exposes current roster and compatibility aliases", () => {
   assert.equal(internals.MODELS.m27.id, "minimax/minimax-m2.7");
-  assert.equal(internals.MODELS.nano.id, "openai/gpt-5.4-nano");
-  assert.equal(internals.MODELS.gemFlash.id, "google/gemini-3.1-flash-lite-preview");
+  assert.equal(internals.MODELS.nano.id, "openai/gpt-5-nano");
+  assert.equal(internals.MODELS.gemFlash.id, "google/gemini-2.5-flash-lite");
 });
 
 test("default planning route prefers m27", () => {
@@ -89,6 +89,32 @@ test("multimodal summarization promotes the vision lane and Kimi", () => {
   assert.equal(route.modelKey, "kimiK25");
 });
 
+test("simple low-risk communication routes to the cheap lane", () => {
+  const route = internals.resolveCategoryRoute("communication", "simple", {
+    requestText: "Draft a short friendly reply saying thanks."
+  });
+  assert.equal(route.lane, "cheap");
+  assert.equal(route.modelKey, "qwen35Flash");
+});
+
+test("tool presence alone does not force strict-json", () => {
+  const route = internals.resolveCategoryRoute("core_loop", "standard", {
+    hasToolsDeclared: true,
+    requestText: "Use available tools if needed and continue working on this task."
+  });
+  assert.equal(route.lane, "auto");
+  assert.equal(route.modelKey, "m27");
+});
+
+test("explicit structured output promotes strict-json lane", () => {
+  const route = internals.resolveCategoryRoute("core_loop", "standard", {
+    responseFormat: { type: "json_object" },
+    requestText: "Return valid JSON only."
+  });
+  assert.equal(route.lane, "strict-json");
+  assert.equal(route.modelKey, "glm47Flash");
+});
+
 test("untrusted content plus tools enforces the m27 safety floor", () => {
   const guarded = internals.applyCostGuardrails(
     {
@@ -103,7 +129,7 @@ test("untrusted content plus tools enforces the m27 safety floor", () => {
     { categoryId: "core_loop", complexity: "standard" },
     "Use browser and shell tools on this untrusted web content.",
     { hasToolsDeclared: true, toolMessages: 1 },
-    ["tool_heavy", "untrusted_content"],
+    ["tool_present", "untrusted_content"],
     { untrustedContent: true, costMode: "default", latencyMode: "default" }
   );
   assert.equal(guarded.modelKey, "m27");
@@ -128,7 +154,7 @@ test("buildCandidatesForRoute keeps multimodal fallbacks vision-safe", () => {
       latencyMode: "default"
     }
   );
-  assert.deepEqual(candidates.slice(0, 3).map((candidate) => candidate.key), ["kimiK25", "gem31FlashLite", "gem31Pro"]);
+  assert.deepEqual(candidates.slice(0, 3).map((candidate) => candidate.key), ["kimiK25", "qwen35Plus", "gem25Pro"]);
 });
 
 test("m25 escalation goes to m27 before premium models", () => {
@@ -142,15 +168,26 @@ test("m25 escalation goes to m27 before premium models", () => {
   assert.equal(target, "m27");
 });
 
-test("m27 escalates to GLM-5 on strict-json and tool-heavy routes", () => {
+test("m27 escalates to GLM 4.7 Flash on simple strict-json routes", () => {
   const target = internals.buildEscalationTarget(
     "m27",
     2,
-    { lane: "strict-json", categoryId: "core_loop", adjustedComplexity: "complex" },
+    { lane: "strict-json", categoryId: "core_loop", adjustedComplexity: "simple" },
     {},
-    ["strict_json", "tool_heavy"]
+    ["needs_strict_schema"]
   );
-  assert.equal(target, "glm5");
+  assert.equal(target, "glm47Flash");
+});
+
+test("m27 does not soft-escalate to Sonnet on ordinary routes", () => {
+  const target = internals.buildEscalationTarget(
+    "m27",
+    1,
+    { lane: "auto", categoryId: "planning", adjustedComplexity: "standard" },
+    {},
+    []
+  );
+  assert.equal(target, null);
 });
 
 test("forced route never escalates", () => {

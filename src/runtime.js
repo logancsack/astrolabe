@@ -360,6 +360,30 @@ function normalizeResponsesMessageItem(item) {
       content: item.content || []
     };
   }
+  if (item.type === "reasoning") {
+    return {
+      role: "assistant",
+      content: [
+        {
+          type: "input_text",
+          text: safeText(item.summary || item.content || item.text || "[reasoning]")
+        }
+      ],
+      astrolabe_reasoning: item
+    };
+  }
+  if (item.type === "item_reference") {
+    return {
+      role: "system",
+      content: [
+        {
+          type: "input_text",
+          text: `[item_reference:${item.id || item.item_id || item.reference_id || "unknown"}]`
+        }
+      ],
+      astrolabe_item_reference: item
+    };
+  }
   if (item.type === "function_call_output") {
     return {
       role: "tool",
@@ -530,6 +554,99 @@ function buildCandidatesFromKeys(keys, options = {}) {
   }));
 }
 
+function hasExplicitStructuredOutputRequest(normalized, hints = {}) {
+  const text = String(normalized.inputText || "").toLowerCase();
+  if (normalized.responseFormat) return true;
+  if (hints.requested?.lane === "strict-json") return true;
+  return /\b(json|json schema|schema-safe|structured output|tool arguments|function arguments|llm task|valid json)\b/i.test(text);
+}
+
+function inferActionClass(normalized, hints, features, classification, safetyGate) {
+  const text = String(features.requestText || normalized.inputText || "").toLowerCase();
+  if (safetyGate.triggered || hints.approvalRequired || classification.categoryId === "high_stakes") return "high_stakes";
+  if (features.hasMultimodal) return "vision_analysis";
+  if (hasExplicitStructuredOutputRequest(normalized, hints)) return "strict_json";
+  if (/\b(spawn[_ -]?agent|sub-?agent|delegate|send_input|session coordination|coordinate agents|automation planning)\b/i.test(text)) {
+    return "subagent_coordination";
+  }
+  if (/\b(browser|web[_ -]?search|web[_ -]?fetch|search the web|citations?|sources?|browse)\b/i.test(text)) {
+    return classification.categoryId === "research" ? "research_synthesis" : "browser_research";
+  }
+  if (/\b(stack trace|failing test|compile|build failed|runtime error|exception|traceback|run this|execute|terminal output|logs?)\b/i.test(text)) {
+    return "exec_loop";
+  }
+  if (/\b(apply_patch|patch|edit file|edit the file|refactor|rename|codebase|repo|repository|implement|fix bug)\b/i.test(text)) {
+    return "code_edit";
+  }
+  if (classification.categoryId === "research" || hasDeepAnalysisSignals(text)) return "research_synthesis";
+  if (/\b(reply|email|message|draft a reply|send a response)\b/i.test(text)) return "message_drafting";
+  if (
+    features.hasToolsDeclared ||
+    features.toolMessages > 0 ||
+    M27_WORKHORSE_CATEGORIES.has(classification.categoryId) ||
+    /\b(project|task|ticket|issue|plan|roadmap|workflow|next step)\b/i.test(text)
+  ) {
+    return "active_session";
+  }
+  return "casual_chat";
+}
+
+function collectRequestedOptionalFields(normalized) {
+  const optional = {
+    temperature: normalized.body?.temperature,
+    top_p: normalized.body?.top_p,
+    top_k: normalized.body?.top_k,
+    min_p: normalized.body?.min_p,
+    presence_penalty: normalized.body?.presence_penalty,
+    frequency_penalty: normalized.body?.frequency_penalty,
+    repetition_penalty: normalized.body?.repetition_penalty,
+    seed: normalized.body?.seed,
+    stop: normalized.body?.stop,
+    logit_bias: normalized.body?.logit_bias,
+    logprobs: normalized.body?.logprobs,
+    top_logprobs: normalized.body?.top_logprobs,
+    parallel_tool_calls: normalized.body?.parallel_tool_calls,
+    structured_outputs: normalized.body?.structured_outputs,
+    include_reasoning: normalized.body?.include_reasoning,
+    reasoning: normalized.reasoning || normalized.body?.reasoning,
+    reasoning_effort: normalized.body?.reasoning_effort,
+    verbosity: normalized.body?.verbosity
+  };
+  return Object.fromEntries(Object.entries(optional).filter(([, value]) => value !== undefined));
+}
+
+function sanitizeOptionalPayload(candidate, optionalFields, { minimal = false } = {}) {
+  const supported = new Set(modelEntryForKey(candidate.key)?.supportedParameters || []);
+  const sanitized = {};
+  for (const [field, value] of Object.entries(optionalFields || {})) {
+    if (value === undefined) continue;
+    if (!supported.has(field)) continue;
+    if (minimal && ["reasoning", "include_reasoning", "verbosity", "logprobs", "top_logprobs", "parallel_tool_calls"].includes(field)) {
+      continue;
+    }
+    sanitized[field] = value;
+  }
+  return sanitized;
+}
+
+function canUseResponsesChatFallback(normalized) {
+  return normalized.api === "responses" && !normalized.stream && Array.isArray(normalized.messages) && normalized.messages.length > 0;
+}
+
+function summarizeReasoningContinuity(normalized, modelKey, primaryApi) {
+  const requested =
+    Boolean(normalized.reasoning) ||
+    (Array.isArray(normalized.responsesInput) && normalized.responsesInput.some((item) => item?.type === "reasoning"));
+  const supported = Boolean(modelEntryForKey(modelKey)?.supportsReasoningPreservation);
+  const preserved = requested && supported && primaryApi === "responses";
+  return {
+    requested,
+    supported,
+    preserved,
+    via_api: primaryApi
+  };
+}
+
 function createRuntime(config) {
   const HIGH_STAKES_POLICY_PROMPT = [
     "[ASTROLABE_HIGH_STAKES_POLICY]",
@@ -543,7 +660,7 @@ function createRuntime(config) {
     "Return strict JSON only with keys: category, complexity, confidence, modifiers, reason, matched_signals, high_stakes.",
     'Allowed category values: "heartbeat","core_loop","retrieval","summarization","planning","orchestration","coding","research","creative","communication","high_stakes","reflection".',
     'Allowed complexity values: "simple","standard","complex","critical".',
-    "Allowed modifiers: multimodal, tool_heavy, strict_json, long_context, cacheable, approval_required, price_sensitive, untrusted_content.",
+    "Allowed modifiers: multimodal, tool_present, needs_strict_schema, exec_loop, browser_research, code_edit, subagent_coordination, long_context, cacheable, approval_required, price_sensitive, untrusted_content.",
     "confidence must be 1-5."
   ].join("\n");
 
@@ -650,9 +767,27 @@ function createRuntime(config) {
     const combined = normalizeWhitespace(`${lastUserMessage}\n${recentContext}`);
     const categoryId = heuristicCategoryFallback(combined, features, safetyGate, hints);
     const complexity = heuristicComplexity(combined, features, safetyGate, hints, categoryId);
+    const actionClass = inferActionClass(
+      {
+        api: "chat",
+        inputText: combined,
+        responseFormat: null,
+        body: {},
+        messages: []
+      },
+      hints,
+      { ...features, requestText: combined },
+      { categoryId, complexity },
+      safetyGate
+    );
     const modifiers = [];
     if (features.hasMultimodal) modifiers.push("multimodal");
-    if (features.hasToolsDeclared || features.toolMessages > 0) modifiers.push("tool_heavy");
+    if (features.hasToolsDeclared || features.toolMessages > 0) modifiers.push("tool_present");
+    if (actionClass === "strict_json") modifiers.push("needs_strict_schema");
+    if (actionClass === "exec_loop") modifiers.push("exec_loop");
+    if (actionClass === "browser_research") modifiers.push("browser_research");
+    if (actionClass === "code_edit") modifiers.push("code_edit");
+    if (actionClass === "subagent_coordination") modifiers.push("subagent_coordination");
     if (features.approxTokens >= 10000) modifiers.push("long_context");
     if (features.approxTokens >= 2500 || features.messageCount >= 6) modifiers.push("cacheable");
     if (hints.approvalRequired) modifiers.push("approval_required");
@@ -667,6 +802,7 @@ function createRuntime(config) {
       reason: `Heuristic fallback for ${category?.name || categoryId}.`,
       matchedSignals: collectMatchedSignals(combined, category?.classifierSignals || []),
       highStakes: categoryId === "high_stakes",
+      actionClass,
       source: "heuristic"
     };
   }
@@ -728,7 +864,7 @@ function createRuntime(config) {
     const heuristic = heuristicClassification(lastUserMessage, recentContext, features, safetyGate, hints);
     if (config.FORCE_MODEL_ID) return heuristic;
     const classifierCandidates = buildCandidatesFromKeys(
-      [config.CLASSIFIER_MODEL_KEY, "gpt54Mini", "grok"],
+      [config.CLASSIFIER_MODEL_KEY, "glm47Flash", "grok"],
       { multimodal: false }
     );
     if (!classifierCandidates.length) return heuristic;
@@ -771,16 +907,27 @@ function createRuntime(config) {
     }
   }
 
-  function collectRouteModifiers(normalized, hints, features, classification, safetyGate) {
-    const modifiers = new Set(classification.modifiers || []);
+  function collectRouteModifiers(normalized, hints, features, classification, safetyGate, actionClass) {
+    const modifiers = new Set(
+      (classification.modifiers || []).map((modifier) => {
+        if (modifier === "tool_heavy") return "tool_present";
+        if (modifier === "strict_json") return "needs_strict_schema";
+        return modifier;
+      })
+    );
     if (features.hasMultimodal) modifiers.add("multimodal");
-    if (features.hasToolsDeclared || features.toolMessages > 0) modifiers.add("tool_heavy");
-    if (normalized.responseFormat) modifiers.add("strict_json");
+    if (features.hasToolsDeclared || features.toolMessages > 0) modifiers.add("tool_present");
+    if (hasExplicitStructuredOutputRequest(normalized, hints) || actionClass === "strict_json") modifiers.add("needs_strict_schema");
+    if (actionClass === "exec_loop") modifiers.add("exec_loop");
+    if (actionClass === "browser_research" || actionClass === "research_synthesis") modifiers.add("browser_research");
+    if (actionClass === "code_edit") modifiers.add("code_edit");
+    if (actionClass === "subagent_coordination") modifiers.add("subagent_coordination");
     if (features.approxTokens >= 10000) modifiers.add("long_context");
     if (features.approxTokens >= 2500 || features.messageCount >= 6) modifiers.add("cacheable");
     if (hints.approvalRequired || safetyGate.actionLike) modifiers.add("approval_required");
     if (hints.untrustedContent) modifiers.add("untrusted_content");
     if (hints.costMode === "strict" || hints.requested.lane === "cheap") modifiers.add("price_sensitive");
+    if (actionClass === "high_stakes") modifiers.add("high_stakes");
     return [...modifiers];
   }
 
@@ -788,16 +935,39 @@ function createRuntime(config) {
     const requested = hints.requested || {};
     if (requested.type === "virtual" && requested.lane && requested.lane !== "auto") return requested.lane;
     if (requested.type === "raw") return "pinned";
-    if (routeIntent.categoryId === "high_stakes" || modifiers.includes("approval_required")) return "safe";
+    if (routeIntent.categoryId === "high_stakes" || modifiers.includes("approval_required") || routeIntent.actionClass === "high_stakes") {
+      return "safe";
+    }
     if (modifiers.includes("multimodal")) return "vision";
-    if (modifiers.includes("strict_json") || (modifiers.includes("tool_heavy") && routeIntent.categoryId !== "communication")) {
+    if (modifiers.includes("needs_strict_schema")) {
       return "strict-json";
     }
-    if (routeIntent.categoryId === "research") return "research";
-    if (routeIntent.categoryId === "coding") return "coding";
+    if (
+      routeIntent.categoryId === "research" ||
+      routeIntent.actionClass === "research_synthesis" ||
+      routeIntent.actionClass === "browser_research"
+    ) {
+      return "research";
+    }
+    if (
+      routeIntent.categoryId === "coding" ||
+      routeIntent.actionClass === "code_edit" ||
+      routeIntent.actionClass === "exec_loop" ||
+      routeIntent.actionClass === "subagent_coordination"
+    ) {
+      return "coding";
+    }
+    if (
+      LOW_RISK_CATEGORIES.has(routeIntent.categoryId) &&
+      routeIntent.adjustedComplexity === "simple" &&
+      !modifiers.includes("tool_present") &&
+      !modifiers.includes("multimodal")
+    ) {
+      return "cheap";
+    }
     if (
       requested.lane === "cheap" ||
-      (modifiers.includes("price_sensitive") && !modifiers.includes("tool_heavy") && LOW_RISK_CATEGORIES.has(routeIntent.categoryId))
+      (modifiers.includes("price_sensitive") && LOW_RISK_CATEGORIES.has(routeIntent.categoryId) && !modifiers.includes("needs_strict_schema"))
     ) {
       return "cheap";
     }
@@ -809,28 +979,38 @@ function createRuntime(config) {
     if (requested.type === "raw") return requested.modelKey;
     if (config.FORCE_MODEL_ID) return resolveModelKeyFromId(config.FORCE_MODEL_ID) || null;
     if (lane === "safe") return "sonnet";
-    if (lane === "vision") return features.approxTokens >= 24000 ? "gem31Pro" : "kimiK25";
-    if (lane === "research") return features.approxTokens >= 12000 ? "kimiThinking" : "m27";
-    if (lane === "strict-json") return "glm5";
+    if (lane === "vision") return features.approxTokens >= 18000 ? "qwen35Plus" : "kimiK25";
+    if (lane === "research") {
+      if (features.approxTokens >= 18000 || modifiers.includes("long_context") || features.hasMultimodal) return "qwen35Plus";
+      if (routeIntent.adjustedComplexity === "complex" || routeIntent.adjustedComplexity === "critical") return "kimiThinking";
+      return "m27";
+    }
+    if (lane === "strict-json") {
+      if (routeIntent.adjustedComplexity === "complex" || routeIntent.adjustedComplexity === "critical") return "glm5";
+      return "glm47Flash";
+    }
     if (lane === "coding") {
-      if (routeIntent.adjustedComplexity === "simple" && hints.costMode === "strict") return "dsCoder";
+      if (routeIntent.adjustedComplexity === "simple" && hints.costMode === "strict") return "qwenCoderNext";
+      if (modifiers.includes("needs_strict_schema") && routeIntent.adjustedComplexity !== "simple") return "glm5";
       return "m27";
     }
     if (lane === "cheap") {
-      if (routeIntent.categoryId === "coding") return "dsCoder";
+      if (routeIntent.categoryId === "coding") return "qwenCoderNext";
+      if (modifiers.includes("tool_present") || modifiers.includes("long_context")) return "grok";
       if (["heartbeat", "retrieval", "summarization"].includes(routeIntent.categoryId) && !features.hasToolsDeclared) {
-        return "gpt54Nano";
+        return "qwen35Flash";
       }
-      return "grok";
+      return routeIntent.actionClass === "message_drafting" ? "grok" : "qwen35Flash";
     }
     if (modifiers.includes("multimodal")) return "kimiK25";
     if (routeIntent.categoryId === "high_stakes") return "sonnet";
-    if (modifiers.includes("strict_json")) return "glm5";
+    if (modifiers.includes("needs_strict_schema")) return routeIntent.adjustedComplexity === "simple" ? "glm47Flash" : "glm5";
+    if (routeIntent.actionClass === "casual_chat" || routeIntent.actionClass === "message_drafting") return "qwen35Flash";
     if (M27_WORKHORSE_CATEGORIES.has(routeIntent.categoryId)) return "m27";
     if (["retrieval", "summarization", "heartbeat"].includes(routeIntent.categoryId) && routeIntent.adjustedComplexity === "simple") {
-      return "gpt54Nano";
+      return "qwen35Flash";
     }
-    if (routeIntent.adjustedComplexity === "simple") return "grok";
+    if (routeIntent.adjustedComplexity === "simple") return "qwen35Flash";
     return "m27";
   }
 
@@ -839,13 +1019,13 @@ function createRuntime(config) {
     const guarded = { ...routeDecision };
     const strictBudgetProfile = config.DEFAULT_PROFILE === "strict-budget" || hints.costMode === "strict";
     if (hints.untrustedContent && (features.hasToolsDeclared || features.toolMessages > 0)) {
-      if (["grok", "dsCoder", "gpt54Nano", "gpt54Mini", "m25"].includes(guarded.modelKey)) {
+      if (["grok", "dsCoder", "gpt5Nano", "gpt54Nano", "qwen35Flash", "qwenCoderNext", "m25"].includes(guarded.modelKey)) {
         guarded.modelKey = "m27";
         guarded.modelId = modelIdForKey("m27");
         guarded.label = "SAFETY_FLOOR";
       }
     }
-    if (strictBudgetProfile && guarded.modelKey === "m27" && !modifiers.includes("multimodal") && !modifiers.includes("strict_json")) {
+    if (strictBudgetProfile && guarded.modelKey === "m27" && !modifiers.includes("multimodal") && !modifiers.includes("needs_strict_schema")) {
       if (LOW_RISK_CATEGORIES.has(routeIntent.categoryId) || routeIntent.categoryId === "planning") {
         guarded.modelKey = "m25";
         guarded.modelId = modelIdForKey("m25");
@@ -858,19 +1038,20 @@ function createRuntime(config) {
       guarded.label = "MAX_CAPABILITY";
     }
     if (isOnboardingLikeRequest(requestText) && !features.hasToolsDeclared && routeIntent.categoryId !== "high_stakes") {
-      guarded.modelKey = hints.costMode === "strict" ? "grok" : guarded.modelKey;
+      guarded.modelKey = hints.costMode === "strict" ? "grok" : "qwen35Flash";
       guarded.modelId = modelIdForKey(guarded.modelKey);
-      if (guarded.modelKey === "grok") guarded.label = "BUDGET_GUARDRAIL";
+      guarded.label = guarded.modelKey === "grok" ? "BUDGET_GUARDRAIL" : "LOW_RISK_VALUE";
     }
     return guarded;
   }
 
-  function resolveCategoryRoute(classification, hints, features, modifiers, safetyGate) {
+  function resolveCategoryRoute(classification, hints, features, modifiers, safetyGate, actionClass) {
     const adjustedComplexity = applyRoutingProfile(classification.complexity, classification.categoryId);
     const routeIntent = {
       categoryId: classification.categoryId,
       complexity: classification.complexity,
-      adjustedComplexity
+      adjustedComplexity,
+      actionClass
     };
     const lane = chooseLane(null, routeIntent, hints, modifiers);
     let modelKey = selectInitialModelForLane(lane, routeIntent, hints, features, modifiers);
@@ -890,6 +1071,7 @@ function createRuntime(config) {
     const routeDecision = {
       ...routeIntent,
       lane,
+      actionClass,
       modelKey,
       modelId: modelKey ? modelIdForKey(modelKey) : config.FORCE_MODEL_ID,
       label,
@@ -917,14 +1099,19 @@ function createRuntime(config) {
     ];
     let candidates = buildCandidatesFromKeys(keys, { multimodal: modifiers.includes("multimodal") });
     if (hints.untrustedContent && (features.hasToolsDeclared || features.toolMessages > 0)) {
-      candidates = candidates.filter((candidate) => !["grok", "dsCoder", "gpt54Nano", "gpt54Mini", "m25"].includes(candidate.key));
+      candidates = candidates.filter(
+        (candidate) => !["grok", "dsCoder", "gpt5Nano", "gpt54Nano", "qwen35Flash", "qwenCoderNext", "m25"].includes(candidate.key)
+      );
+    }
+    if (!["research", "vision"].includes(routeDecision.lane)) {
+      candidates = candidates.filter((candidate) => !modelEntryForKey(candidate.key)?.preview);
     }
     return candidates;
   }
 
   function determineVerificationPolicy(routeDecision, modifiers) {
     if (routeDecision.lane === "safe" || routeDecision.categoryId === "high_stakes") return "safe";
-    if (modifiers.includes("strict_json") || modifiers.includes("tool_heavy")) return "tool_schema";
+    if (modifiers.includes("needs_strict_schema") || routeDecision.actionClass === "strict_json") return "tool_schema";
     return "basic";
   }
 
@@ -933,7 +1120,9 @@ function createRuntime(config) {
     if (score >= 4) return false;
     if (routeDecision.lane === "safe" || routeDecision.categoryId === "high_stakes") return true;
     if (score <= 1) return true;
-    return routeDecision.adjustedComplexity === "complex" || routeDecision.adjustedComplexity === "critical";
+    if (routeDecision.lane === "strict-json" && score <= 3) return true;
+    if (routeDecision.lane === "research" && routeDecision.adjustedComplexity === "critical" && score <= 2) return true;
+    return false;
   }
 
   function buildEscalationTarget(modelKey, score, routeDecision = {}, features = {}, modifiers = []) {
@@ -941,14 +1130,28 @@ function createRuntime(config) {
     if (modelKey === "opus") return null;
     if (routeDecision.lane === "safe") return modelKey === "sonnet" ? "opus" : "sonnet";
     if (modelKey === "m25") return "m27";
+    if (modelKey === "gpt5Nano") return "glm47Flash";
+    if (modelKey === "qwen35Flash" || modelKey === "grok" || modelKey === "dsCoder" || modelKey === "qwenCoderNext") return "m27";
     if (modelKey === "m27") {
-      if (modifiers.includes("strict_json") || modifiers.includes("tool_heavy")) return "glm5";
-      if (modifiers.includes("multimodal")) return features.approxTokens >= 24000 ? "gem31Pro" : "kimiK25";
-      if (routeDecision.categoryId === "research") return "kimiThinking";
-      return "sonnet";
+      if (modifiers.includes("needs_strict_schema")) {
+        return routeDecision.adjustedComplexity === "simple" ? "glm47Flash" : "glm5";
+      }
+      if (routeDecision.lane === "vision" || modifiers.includes("multimodal")) {
+        return features.approxTokens >= 18000 ? "qwen35Plus" : "kimiK25";
+      }
+      if (routeDecision.lane === "research" || routeDecision.categoryId === "research") {
+        return features.approxTokens >= 18000 || modifiers.includes("long_context") ? "qwen35Plus" : "kimiThinking";
+      }
+      if (routeDecision.lane === "coding" && score <= 1) return "glm5";
+      if (routeDecision.adjustedComplexity === "critical") return "sonnet";
+      return null;
     }
-    if (modelKey === "glm5") return "sonnet";
+    if (modelKey === "glm47Flash") return "glm5";
+    if (modelKey === "glm5") return routeDecision.lane === "strict-json" ? "gpt54Mini" : "sonnet";
+    if (modelKey === "gpt54Mini") return "gpt54";
+    if (modelKey === "gpt54") return "sonnet";
     if (modelKey === "kimiK25" || modelKey === "kimiThinking") return "sonnet";
+    if (modelKey === "qwen35Plus") return "sonnet";
     if (modelKey === "sonnet") return "opus";
     return ESCALATION_PATH[modelKey] || "m27";
   }
@@ -956,7 +1159,7 @@ function createRuntime(config) {
   function buildProviderOverrides(routeDecision, modifiers = [], hints = {}) {
     const provider = {
       allow_fallbacks: true,
-      require_parameters: Boolean(modifiers.includes("tool_heavy") || modifiers.includes("strict_json"))
+      require_parameters: Boolean(modifiers.includes("needs_strict_schema"))
     };
     provider.sort = hints.latencyMode === "fast" ? "latency" : hints.costMode === "strict" || routeDecision.lane === "cheap" ? "price" : "throughput";
     if (hints.trustBoundary === "private" || hints.trustBoundary === "sensitive") provider.zdr = true;
@@ -965,52 +1168,64 @@ function createRuntime(config) {
 
   function buildPlugins(normalized, routeDecision, modifiers) {
     const plugins = [];
-    if (!normalized.stream && normalized.responseFormat) plugins.push({ id: "response-healing" });
+    if (!normalized.stream && (normalized.responseFormat || modifiers.includes("needs_strict_schema"))) {
+      plugins.push({ id: "response-healing" });
+    }
     if (modifiers.includes("long_context") && routeDecision.lane === "research") plugins.push({ id: "context-compression" });
     return plugins;
   }
 
   function maybeExactoModelId(modelId, modelKey, modifiers) {
-    if (modelKey === "glm5" && (modifiers.includes("tool_heavy") || modifiers.includes("strict_json"))) {
+    if ((modelKey === "glm5" || modelKey === "glm47Flash") && modifiers.includes("needs_strict_schema")) {
       return `${modelId}:exacto`;
     }
     return modelId;
   }
 
-  function buildChatPayload(normalized, candidate, routeDecision, modifiers, hints) {
+  function buildChatPayload(normalized, candidate, routeDecision, modifiers, hints, options = {}) {
+    const optional = sanitizeOptionalPayload(candidate, collectRequestedOptionalFields(normalized), options);
     const payload = {
-      ...normalized.body,
       model: maybeExactoModelId(candidate.modelId, candidate.key, modifiers),
       messages: normalized.messages,
       stream: normalized.stream,
-      tools: normalized.tools,
-      tool_choice: normalized.toolChoice,
-      response_format: normalized.responseFormat || undefined,
-      max_tokens: normalized.maxOutputTokens || normalized.body.max_tokens,
-      provider: buildProviderOverrides(routeDecision, modifiers, hints)
+      provider: buildProviderOverrides(routeDecision, modifiers, hints),
+      ...optional
     };
+    if (normalized.tools?.length && (modelEntryForKey(candidate.key)?.supportedParameters || []).includes("tools")) payload.tools = normalized.tools;
+    if (normalized.toolChoice != null && (modelEntryForKey(candidate.key)?.supportedParameters || []).includes("tool_choice")) {
+      payload.tool_choice = normalized.toolChoice;
+    }
+    if (normalized.responseFormat && (modelEntryForKey(candidate.key)?.supportedParameters || []).includes("response_format")) {
+      payload.response_format = normalized.responseFormat;
+    }
+    if (normalized.maxOutputTokens != null && (modelEntryForKey(candidate.key)?.supportedParameters || []).includes("max_tokens")) {
+      payload.max_tokens = normalized.maxOutputTokens;
+    }
     const plugins = buildPlugins(normalized, routeDecision, modifiers);
-    if (plugins.length) payload.plugins = plugins;
+    if (plugins.length && !options.minimal) payload.plugins = plugins;
     return payload;
   }
 
-  function buildResponsesPayload(normalized, candidate, routeDecision, modifiers, hints) {
+  function buildResponsesPayload(normalized, candidate, routeDecision, modifiers, hints, options = {}) {
+    const supports = new Set(modelEntryForKey(candidate.key)?.supportedParameters || []);
+    const optional = sanitizeOptionalPayload(candidate, collectRequestedOptionalFields(normalized), options);
     const payload = {
       model: maybeExactoModelId(candidate.modelId, candidate.key, modifiers),
       input: normalized.responsesInput ?? normalized.messages,
       instructions: normalized.instructions || undefined,
-      tools: normalized.tools,
-      tool_choice: normalized.toolChoice,
       stream: normalized.stream,
-      reasoning: normalized.reasoning || undefined,
-      text: normalized.text || (normalized.responseFormat ? { format: normalized.responseFormat } : undefined),
-      response_format: normalized.responseFormat || undefined,
-      max_output_tokens: normalized.maxOutputTokens,
       metadata: normalized.metadata,
-      provider: buildProviderOverrides(routeDecision, modifiers, hints)
+      provider: buildProviderOverrides(routeDecision, modifiers, hints),
+      ...optional
     };
+    if (normalized.tools?.length && supports.has("tools")) payload.tools = normalized.tools;
+    if (normalized.toolChoice != null && supports.has("tool_choice")) payload.tool_choice = normalized.toolChoice;
+    if (normalized.reasoning && supports.has("reasoning")) payload.reasoning = normalized.reasoning;
+    if (!options.minimal) payload.text = normalized.text || (normalized.responseFormat ? { format: normalized.responseFormat } : undefined);
+    if (normalized.responseFormat && supports.has("response_format")) payload.response_format = normalized.responseFormat;
+    if (normalized.maxOutputTokens != null && supports.has("max_tokens")) payload.max_output_tokens = normalized.maxOutputTokens;
     const plugins = buildPlugins(normalized, routeDecision, modifiers);
-    if (plugins.length) payload.plugins = plugins;
+    if (plugins.length && !options.minimal) payload.plugins = plugins;
     return payload;
   }
 
@@ -1090,7 +1305,7 @@ function createRuntime(config) {
     const verifierCandidates = buildCandidatesFromKeys(
       [
         verifierPolicy === "safe" ? "gpt54" : config.SELF_CHECK_MODEL_KEY,
-        "gpt54Mini",
+        "glm47Flash",
         "grok"
       ],
       { multimodal: false }
@@ -1161,6 +1376,7 @@ function createRuntime(config) {
   function buildAstrolabeMetadata(routeDecision, classification, modifiers, candidates, execution, verifier, toolPolicy) {
     return {
       category: routeDecision.categoryId,
+      action_class: routeDecision.actionClass,
       complexity: classification.complexity,
       adjusted_complexity: routeDecision.adjustedComplexity,
       lane: routeDecision.lane,
@@ -1169,8 +1385,10 @@ function createRuntime(config) {
       candidate_models: candidates.map((candidate) => candidate.modelId),
       chosen_model: execution.initialModelId,
       final_model: execution.finalModelId,
+      upstream_api: execution.upstreamApi,
       provider_policy: execution.providerPolicy,
       cache_policy: modifiers.includes("cacheable") ? "cache-friendly" : "default",
+      reasoning_continuity: execution.reasoningContinuity,
       verifier_result: verifier
         ? {
             policy: verifier.policy || determineVerificationPolicy(routeDecision, modifiers),
@@ -1179,19 +1397,22 @@ function createRuntime(config) {
           }
         : null,
       tool_policy: toolPolicy,
-      retry_path: execution.retryPath
+      retry_path: execution.retryPath,
+      estimated_cost: execution.cost
     };
   }
 
   function setRoutingHeaders(res, metadata) {
     const headers = {
       "x-astrolabe-category": metadata.categoryId,
+      "x-astrolabe-action-class": metadata.actionClass,
       "x-astrolabe-complexity": metadata.complexity,
       "x-astrolabe-adjusted-complexity": metadata.adjustedComplexity,
       "x-astrolabe-lane": metadata.lane,
       "x-astrolabe-initial-model": metadata.initialModelId,
       "x-astrolabe-final-model": metadata.finalModelId,
       "x-astrolabe-route-label": metadata.routeLabel,
+      "x-astrolabe-upstream-api": metadata.upstreamApi,
       "x-astrolabe-escalated": String(Boolean(metadata.escalated)),
       "x-astrolabe-confidence-score": metadata.confidenceScore == null ? "" : String(metadata.confidenceScore),
       "x-astrolabe-low-confidence": String(Boolean(metadata.lowConfidence)),
@@ -1288,38 +1509,94 @@ function createRuntime(config) {
     }
     validateResponsesUrlParts(normalized);
     const classification = await classifyRequest(lastUserMessage, recentContext, features, safetyGate, hints);
-    const modifiers = collectRouteModifiers(normalized, hints, features, classification, safetyGate);
-    const routeDecision = resolveCategoryRoute(classification, hints, features, modifiers, safetyGate);
+    const actionClass = inferActionClass(normalized, hints, features, classification, safetyGate);
+    const modifiers = collectRouteModifiers(normalized, hints, features, classification, safetyGate, actionClass);
+    const routeDecision = resolveCategoryRoute(classification, hints, features, modifiers, safetyGate, actionClass);
     const candidates = buildCandidatesForRoute(routeDecision, features, modifiers, hints);
     const outboundMessages =
       safetyGate.triggered && config.HIGH_STAKES_CONFIRM_MODE === "prompt" && normalized.api === "chat"
         ? maybeInjectHighStakesPrompt(normalized.messages)
         : normalized.messages;
     const executionRetryPath = [];
-    const callApi = async (candidate, stream, preferredApi = normalized.api) => {
-      executionRetryPath.push(candidate.modelId);
-      if (preferredApi === "responses") {
-        const payload = buildResponsesPayload({ ...normalized, messages: outboundMessages }, candidate, routeDecision, modifiers, hints);
-        return stream ? callOpenRouterResponsesStream(payload, config) : callOpenRouterResponses(payload, config);
+
+    const invokeCandidate = async (candidate, api, minimal = false) => {
+      executionRetryPath.push(`${api}${minimal ? ":minimal" : ""}:${candidate.modelId}`);
+      if (api === "responses") {
+        const payload = buildResponsesPayload(
+          { ...normalized, messages: outboundMessages },
+          candidate,
+          routeDecision,
+          modifiers,
+          hints,
+          { minimal }
+        );
+        return normalized.stream ? callOpenRouterResponsesStream(payload, config) : callOpenRouterResponses(payload, config);
       }
-      const payload = buildChatPayload({ ...normalized, messages: outboundMessages }, candidate, routeDecision, modifiers, hints);
-      return stream ? callOpenRouterChatStream(payload, config) : callOpenRouterChat(payload, config);
+      const payload = buildChatPayload(
+        { ...normalized, messages: outboundMessages },
+        candidate,
+        routeDecision,
+        modifiers,
+        hints,
+        { minimal }
+      );
+      return normalized.stream ? callOpenRouterChatStream(payload, config) : callOpenRouterChat(payload, config);
     };
 
-    let primaryApi = normalized.api;
-    let execution = null;
-    try {
-      execution = await callWithModelCandidates((candidate, stream) => callApi(candidate, stream, primaryApi), candidates, normalized.stream);
-    } catch (error) {
-      const canFallbackToChat =
-        normalized.api === "responses" &&
-        !normalized.stream &&
-        normalized.messages.length > 0 &&
-        isRetryableModelError(error);
-      if (!canFallbackToChat) throw error;
-      primaryApi = "chat";
-      execution = await callWithModelCandidates((candidate, stream) => callApi(candidate, stream, primaryApi), candidates, false);
-    }
+    const executeSingleCandidate = async (candidate, preferredApi = normalized.api) => {
+      let lastError = null;
+      if (preferredApi === "responses") {
+        try {
+          return { api: "responses", result: await invokeCandidate(candidate, "responses", false) };
+        } catch (error) {
+          lastError = error;
+          if (!normalized.stream && isRetryableModelError(error)) {
+            try {
+              return { api: "responses", result: await invokeCandidate(candidate, "responses", true) };
+            } catch (minimalError) {
+              lastError = minimalError;
+            }
+          }
+          if (canUseResponsesChatFallback(normalized) && isRetryableModelError(lastError)) {
+            try {
+              return { api: "chat", result: await invokeCandidate(candidate, "chat", true) };
+            } catch (chatError) {
+              lastError = chatError;
+            }
+          }
+          throw lastError;
+        }
+      }
+      try {
+        return { api: "chat", result: await invokeCandidate(candidate, "chat", false) };
+      } catch (error) {
+        if (!normalized.stream && isRetryableModelError(error)) {
+          return { api: "chat", result: await invokeCandidate(candidate, "chat", true) };
+        }
+        throw error;
+      }
+    };
+
+    const executeAcrossCandidates = async (candidateList, preferredApi = normalized.api) => {
+      let lastError = null;
+      for (const candidate of candidateList) {
+        try {
+          const executed = await executeSingleCandidate(candidate, preferredApi);
+          return {
+            ...candidate,
+            api: executed.api,
+            result: executed.result
+          };
+        } catch (error) {
+          lastError = error;
+          if (!isRetryableModelError(error)) throw error;
+        }
+      }
+      throw lastError || new Error("No model candidates available.");
+    };
+
+    const execution = await executeAcrossCandidates(candidates, normalized.api);
+    let primaryApi = execution.api;
 
     const initialModelId = execution.modelId;
     let finalModelId = execution.modelId;
@@ -1343,14 +1620,11 @@ function createRuntime(config) {
           [target, ...(MODEL_FALLBACKS[target] || [])],
           { multimodal: modifiers.includes("multimodal") }
         );
-        const escalatedExecution = await callWithModelCandidates(
-          (candidate, stream) => callApi(candidate, stream, primaryApi),
-          escalationCandidates,
-          false
-        );
+        const escalatedExecution = await executeAcrossCandidates(escalationCandidates, primaryApi);
         finalResult = escalatedExecution.result;
         finalModelId = escalatedExecution.modelId;
         finalModelKey = escalatedExecution.key;
+        primaryApi = escalatedExecution.api;
         const escalatedAnswerText =
           normalized.api === "responses" && primaryApi === "responses"
             ? extractResponsesOutputText(finalResult)
@@ -1394,7 +1668,8 @@ function createRuntime(config) {
       toolPolicy,
       providerPolicy: buildProviderOverrides(routeDecision, modifiers, hints),
       retryPath: executionRetryPath,
-      cost: estimateCost(finalModelId, finalResult?.usage)
+      cost: estimateCost(finalModelId, finalResult?.usage),
+      reasoningContinuity: summarizeReasoningContinuity(normalized, finalModelKey, primaryApi)
     };
   }
 
@@ -1409,20 +1684,25 @@ function createRuntime(config) {
       {
         initialModelId: execution.initialModelId,
         finalModelId: execution.finalModelId,
+        upstreamApi: execution.primaryApi,
         providerPolicy: execution.providerPolicy,
-        retryPath: execution.retryPath
+        retryPath: execution.retryPath,
+        reasoningContinuity: execution.reasoningContinuity,
+        cost: execution.cost
       },
       execution.verifier,
       execution.toolPolicy
     );
     setRoutingHeaders(res, {
       categoryId: execution.routeDecision.categoryId,
+      actionClass: execution.routeDecision.actionClass,
       complexity: execution.classification.complexity,
       adjustedComplexity: execution.routeDecision.adjustedComplexity,
       lane: execution.routeDecision.lane,
       initialModelId: execution.initialModelId,
       finalModelId: execution.finalModelId,
       routeLabel: execution.routeDecision.label,
+      upstreamApi: execution.primaryApi,
       escalated: execution.escalated,
       confidenceScore: execution.verifier?.score,
       lowConfidence: execution.lowConfidence,
@@ -1443,20 +1723,25 @@ function createRuntime(config) {
       {
         initialModelId: execution.initialModelId,
         finalModelId: execution.finalModelId,
+        upstreamApi: execution.primaryApi,
         providerPolicy: execution.providerPolicy,
-        retryPath: execution.retryPath
+        retryPath: execution.retryPath,
+        reasoningContinuity: execution.reasoningContinuity,
+        cost: execution.cost
       },
       execution.verifier,
       execution.toolPolicy
     );
     setRoutingHeaders(res, {
       categoryId: execution.routeDecision.categoryId,
+      actionClass: execution.routeDecision.actionClass,
       complexity: execution.classification.complexity,
       adjustedComplexity: execution.routeDecision.adjustedComplexity,
       lane: execution.routeDecision.lane,
       initialModelId: execution.initialModelId,
       finalModelId: execution.finalModelId,
       routeLabel: execution.routeDecision.label,
+      upstreamApi: execution.primaryApi,
       escalated: execution.escalated,
       confidenceScore: execution.verifier?.score,
       lowConfidence: execution.lowConfidence,
@@ -1467,38 +1752,51 @@ function createRuntime(config) {
   }
 
   function serializeModelList(view = "virtual") {
-    const data =
-      view === "raw"
-        ? rawModelsList().map((model) => ({
-            id: model.id,
-            object: "model",
-            key: model.key,
-            aliases: model.aliases,
-            name: model.short,
-            tier: model.tier,
-            pricing: {
-              input_per_1m: model.inputCost,
-              output_per_1m: model.outputCost
-            },
-            context_window: model.contextWindow,
-            modalities: model.modalities,
-            preview: model.preview,
-            tool_ready: model.toolReady,
-            long_context: model.longContext,
-            lane_tags: model.laneTags
-          }))
-        : virtualModelsList().map((model) => ({
-            id: model.id,
-            object: "model",
-            type: "virtual",
-            lane: model.lane,
-            name: model.name,
-            description: model.description,
-            candidates: LANE_MANIFEST[model.lane]?.defaultCandidates?.map((key) => modelIdForKey(key)) || []
-          }));
+    if (view === "raw") {
+      const data = rawModelsList().map((model) => ({
+        id: model.id,
+        object: "model",
+        key: model.key,
+        aliases: model.aliases,
+        name: model.short,
+        tier: model.tier,
+        active_default: Boolean(model.activeDefault),
+        raw_only: Boolean(model.rawOnly),
+        preview: Boolean(model.preview),
+        availability_status: model.preview ? "preview_experimental" : model.rawOnly ? "raw_available" : "active_default",
+        pricing: {
+          input_per_1m: model.inputCost,
+          output_per_1m: model.outputCost
+        },
+        context_window: model.contextWindow,
+        modalities: model.modalities,
+        tool_ready: model.toolReady,
+        long_context: model.longContext,
+        lane_tags: model.laneTags,
+        role_tags: model.roleTags,
+        supported_parameters: model.supportedParameters
+      }));
+      return {
+        object: "list",
+        buckets: {
+          active_defaults: data.filter((model) => model.active_default).map((model) => model.id),
+          raw_available: data.filter((model) => model.raw_only).map((model) => model.id),
+          preview_experimental: data.filter((model) => model.preview).map((model) => model.id)
+        },
+        data
+      };
+    }
     return {
       object: "list",
-      data
+      data: virtualModelsList().map((model) => ({
+        id: model.id,
+        object: "model",
+        type: "virtual",
+        lane: model.lane,
+        name: model.name,
+        description: model.description,
+        candidates: LANE_MANIFEST[model.lane]?.defaultCandidates?.map((key) => modelIdForKey(key)) || []
+      }))
     };
   }
 
@@ -1509,16 +1807,28 @@ function createRuntime(config) {
         id: configEntry.id,
         lane,
         description: configEntry.description,
+        preview_allowed: ["research", "vision"].includes(lane),
         default_candidates: (configEntry.defaultCandidates || []).map((key) => ({
           key,
           id: modelIdForKey(key),
-          name: modelShortForKey(key)
+          name: modelShortForKey(key),
+          preview: Boolean(modelEntryForKey(key)?.preview)
         })),
         fallback_candidates: (configEntry.fallbackCandidates || []).map((key) => ({
           key,
           id: modelIdForKey(key),
-          name: modelShortForKey(key)
-        }))
+          name: modelShortForKey(key),
+          preview: Boolean(modelEntryForKey(key)?.preview)
+        })),
+        trigger_rules: [
+          lane === "auto" ? "default non-trivial OpenClaw work" : null,
+          lane === "cheap" ? "simple low-risk chat, retrieval, or drafting" : null,
+          lane === "coding" ? "code edit, repo work, or exec loop" : null,
+          lane === "research" ? "comparative, citation-heavy, or source-heavy synthesis" : null,
+          lane === "vision" ? "real multimodal inputs such as screenshots or files" : null,
+          lane === "strict-json" ? "explicit structured output, tool arguments, or schema repair" : null,
+          lane === "safe" ? "high-stakes or approval-required turns" : null
+        ].filter(Boolean)
       }))
     };
   }
@@ -1546,21 +1856,43 @@ function createRuntime(config) {
       requestText: String(options.requestText || "")
     };
     const safetyGate = options.safetyGate || { triggered: false, matchedSignals: [], actionLike: false };
+    const actionClass =
+      options.actionClass ||
+      inferActionClass(
+        {
+          api: "chat",
+          inputText: features.requestText || "",
+          responseFormat: options.responseFormat || null,
+          body: {}
+        },
+        hints,
+        { ...features, messageCount: Number(options.messageCount || 0) },
+        classification,
+        safetyGate
+      );
     const modifiers = collectRouteModifiers(
       { responseFormat: options.responseFormat || null },
       hints,
       { ...features, messageCount: Number(options.messageCount || 0) },
       classification,
-      safetyGate
+      safetyGate,
+      actionClass
     );
-    return resolveCategoryRoute(classification, hints, { ...features, messageCount: Number(options.messageCount || 0) }, modifiers, safetyGate);
+    return resolveCategoryRoute(
+      classification,
+      hints,
+      { ...features, messageCount: Number(options.messageCount || 0) },
+      modifiers,
+      safetyGate,
+      actionClass
+    );
   }
 
   const exposedModels = {
     ...RAW_MODEL_MANIFEST,
-    nano: RAW_MODEL_MANIFEST.gpt54Nano,
+    nano: RAW_MODEL_MANIFEST.gpt5Nano,
     mini: RAW_MODEL_MANIFEST.gpt54Mini,
-    gemFlash: RAW_MODEL_MANIFEST.gem31FlashLite
+    gemFlash: RAW_MODEL_MANIFEST.gem25FlashLite
   };
 
   return {
@@ -1588,6 +1920,7 @@ function createRuntime(config) {
       determineVerificationPolicy,
       estimateCost,
       heuristicClassification,
+      inferActionClass,
       isHighStakesConfirmed,
       isOnboardingLikeRequest,
       modelIdForKey,

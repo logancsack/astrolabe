@@ -61,39 +61,48 @@ Core production roster:
 - `m25` -> `minimax/minimax-m2.5`
 - `kimiK25` -> `moonshotai/kimi-k2.5`
 - `kimiThinking` -> `moonshotai/kimi-k2-thinking`
+- `glm47Flash` -> `z-ai/glm-4.7-flash`
 - `glm5` -> `z-ai/glm-5`
 - `grok` -> `x-ai/grok-4.1-fast`
 - `dsCoder` -> `deepseek/deepseek-v3.2`
+- `qwen35Flash` -> `qwen/qwen3.5-flash-02-23`
+- `qwen35Plus` -> `qwen/qwen3.5-plus-02-15`
+- `qwenCoderNext` -> `qwen/qwen3-coder-next`
 - `gpt54` -> `openai/gpt-5.4`
 - `gpt54Mini` -> `openai/gpt-5.4-mini`
+- `gpt5Nano` -> `openai/gpt-5-nano`
 - `gpt54Nano` -> `openai/gpt-5.4-nano`
+- `gem25FlashLite` -> `google/gemini-2.5-flash-lite`
 - `gem31FlashLite` -> `google/gemini-3.1-flash-lite-preview`
+- `gem25Pro` -> `google/gemini-2.5-pro`
 - `gem31Pro` -> `google/gemini-3.1-pro-preview`
+- `grok420Beta` -> `x-ai/grok-4.20-beta`
 - `sonnet` -> `anthropic/claude-sonnet-4.6`
 - `opus` -> `anthropic/claude-opus-4.6`
 
 Compatibility aliases:
 
-- `nano` -> `gpt54Nano`
+- `nano` -> `gpt5Nano`
 - `mini` -> `gpt54Mini`
-- `gemFlash` -> `gem31FlashLite`
+- `gemFlash` -> `gem25FlashLite`
 
 ## Routing defaults
 
 - `astrolabe/auto`: category-driven with `m27` as the main non-trivial default
-- `astrolabe/coding`: `m27 -> glm5 -> sonnet -> opus`
-- `astrolabe/research`: `kimiThinking -> m27 -> gem31Pro -> sonnet -> opus`
-- `astrolabe/vision`: `kimiK25 -> gem31FlashLite -> gem31Pro -> sonnet`
-- `astrolabe/strict-json`: `glm5 -> m27 -> gpt54Mini -> sonnet`
-- `astrolabe/cheap`: `grok -> m25 -> dsCoder -> gpt54Nano`
-- `astrolabe/safe`: `sonnet -> opus`
+- `astrolabe/coding`: `m27 -> qwenCoderNext -> glm5 -> sonnet -> opus`
+- `astrolabe/research`: `qwen35Plus -> kimiThinking -> m27 -> grok420Beta -> sonnet -> opus`
+- `astrolabe/vision`: `kimiK25 -> qwen35Plus -> gem25Pro -> gem31Pro -> sonnet`
+- `astrolabe/strict-json`: `glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet`
+- `astrolabe/cheap`: `qwen35Flash -> grok -> m25 -> dsCoder -> gpt5Nano`
+- `astrolabe/safe`: `sonnet -> opus -> gpt54`
 
 Policy rules worth knowing:
 
 - `m27` is the workhorse for serious OpenClaw turns.
 - `m25` is only used for strict-budget, fallback, or overflow scenarios.
 - Multimodal turns promote to the vision lane.
-- Strict JSON and tool-heavy turns promote to `glm5`.
+- Tool availability alone does not imply `strict-json`.
+- Explicit structured output, schema-safe tool arguments, or repair flows promote to `glm47Flash` / `glm5`.
 - Tool-enabled requests with untrusted content cannot stay on weak cheap tiers.
 
 ## API surface

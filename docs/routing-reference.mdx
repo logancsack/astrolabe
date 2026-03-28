@@ -14,20 +14,21 @@ Astrolabe routes in four steps:
 
 | Lane | Default candidate order |
 | --- | --- |
-| `auto` | `m27 -> glm5 -> kimiThinking -> kimiK25 -> sonnet -> opus` |
-| `coding` | `m27 -> glm5 -> sonnet -> opus` |
-| `research` | `kimiThinking -> m27 -> gem31Pro -> sonnet -> opus` |
-| `vision` | `kimiK25 -> gem31FlashLite -> gem31Pro -> sonnet` |
-| `strict-json` | `glm5 -> m27 -> gpt54Mini -> sonnet` |
-| `cheap` | `grok -> m25 -> dsCoder -> gpt54Nano` |
-| `safe` | `sonnet -> opus` |
+| `auto` | `m27 -> qwen35Plus -> kimiThinking -> kimiK25 -> sonnet -> opus` |
+| `coding` | `m27 -> qwenCoderNext -> glm5 -> sonnet -> opus` |
+| `research` | `qwen35Plus -> kimiThinking -> m27 -> grok420Beta -> sonnet -> opus` |
+| `vision` | `kimiK25 -> qwen35Plus -> gem25Pro -> gem31Pro -> sonnet` |
+| `strict-json` | `glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet` |
+| `cheap` | `qwen35Flash -> grok -> m25 -> dsCoder -> gpt5Nano` |
+| `safe` | `sonnet -> opus -> gpt54` |
 
 ## Key routing rules
 
 - `m27` is the default executor for most non-trivial `core_loop`, `planning`, `orchestration`, `coding`, `research`, and `reflection` requests.
 - `m25` only appears as a strict-budget or fallback path.
 - Multimodal inputs promote the `vision` lane.
-- Strict JSON or tool-heavy requests promote the `strict-json` lane.
+- Tool presence alone does not promote `strict-json`.
+- Explicit structured output, schema-safe tool arguments, or repair flows promote the `strict-json` lane.
 - High-stakes or approval-sensitive work promotes the `safe` lane.
 - Untrusted content plus tools cannot stay on cheap weak tiers.
 
@@ -54,10 +55,11 @@ Astrolabe only escalates non-stream responses.
 Important paths:
 
 - `m25 -> m27`
-- `m27 -> glm5` for strict JSON / tool-heavy work
-- `m27 -> kimiThinking` for deeper research
-- `m27 -> kimiK25` or `gem31Pro` for multimodal specialization
-- `m27 -> sonnet -> opus` for premium escalation
+- `qwen35Flash/grok/qwenCoderNext/dsCoder -> m27`
+- `m27 -> glm47Flash -> glm5` for strict JSON / schema work
+- `m27 -> qwen35Plus` or `kimiThinking` for research specialization
+- `m27 -> kimiK25` or `qwen35Plus` for multimodal specialization
+- `m27 -> sonnet -> opus` only on critical or safe-lane escalation
 
 ## Safety controls
 

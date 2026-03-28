@@ -15,14 +15,22 @@ OpenRouter is the maintainer reference for model IDs and pricing, but the active
 | `m25` | `minimax/minimax-m2.5` | Strict-budget, fallback, and overflow only |
 | `kimiK25` | `moonshotai/kimi-k2.5` | Multimodal and visual specialist |
 | `kimiThinking` | `moonshotai/kimi-k2-thinking` | Long-horizon research/planning specialist |
-| `glm5` | `z-ai/glm-5` | Strict JSON and tool/schema specialist |
-| `grok` | `x-ai/grok-4.1-fast` | Cheap trusted chat |
-| `dsCoder` | `deepseek/deepseek-v3.2` | Very cheap simple coding starter |
+| `glm47Flash` | `z-ai/glm-4.7-flash` | Cheap first-line strict JSON and tool-argument model |
+| `glm5` | `z-ai/glm-5` | Hard schema, tool, and system-design specialist |
+| `grok` | `x-ai/grok-4.1-fast` | Cheap long-context tool-capable model |
+| `dsCoder` | `deepseek/deepseek-v3.2` | Low-cost text-heavy overflow model |
+| `qwen35Flash` | `qwen/qwen3.5-flash-02-23` | Cheap generalist for chat, retrieval, and summarization |
+| `qwen35Plus` | `qwen/qwen3.5-plus-02-15` | Long-context multimodal research/value model |
+| `qwenCoderNext` | `qwen/qwen3-coder-next` | Cost-sensitive coding specialist |
 | `gpt54` | `openai/gpt-5.4` | Cross-family verifier or premium executor |
 | `gpt54Mini` | `openai/gpt-5.4-mini` | Cheap control-plane and verifier role |
-| `gpt54Nano` | `openai/gpt-5.4-nano` | Cheapest classifier/control-plane role |
-| `gem31FlashLite` | `google/gemini-3.1-flash-lite-preview` | Fast multimodal Google path |
-| `gem31Pro` | `google/gemini-3.1-pro-preview` | Premium Google multimodal and long-context path |
+| `gpt5Nano` | `openai/gpt-5-nano` | Default router, classifier, and lightweight verifier |
+| `gpt54Nano` | `openai/gpt-5.4-nano` | Raw available only, not the default nano alias |
+| `gem25FlashLite` | `google/gemini-2.5-flash-lite` | Stable cheap multimodal ingest/extraction model |
+| `gem25Pro` | `google/gemini-2.5-pro` | Stable premium multimodal branch |
+| `gem31FlashLite` | `google/gemini-3.1-flash-lite-preview` | Preview multimodal fast path |
+| `gem31Pro` | `google/gemini-3.1-pro-preview` | Preview multimodal research branch |
+| `grok420Beta` | `x-ai/grok-4.20-beta` | Selective preview premium research branch |
 | `sonnet` | `anthropic/claude-sonnet-4.6` | Safe-lane default and premium escalation |
 | `opus` | `anthropic/claude-opus-4.6` | Final escalation |
 
@@ -30,9 +38,9 @@ OpenRouter is the maintainer reference for model IDs and pricing, but the active
 
 | Alias | Resolves To |
 | --- | --- |
-| `nano` | `gpt54Nano` |
+| `nano` | `gpt5Nano` |
 | `mini` | `gpt54Mini` |
-| `gemFlash` | `gem31FlashLite` |
+| `gemFlash` | `gem25FlashLite` |
 
 ## Virtual models
 
@@ -50,6 +58,8 @@ These are the recommended public-facing models for OpenClaw users:
 
 - `m27` is the default workhorse.
 - `m25` is intentionally not the main default anymore.
+- `gpt-5-nano` owns the control plane by default.
 - Kimi and GLM stay first-class specialists.
+- Preview models are allowed selectively in research and vision, not as default `auto` picks.
 - Raw model additions should be checked into the manifest explicitly.
 - Use `npm run validate:models` to compare the static manifest against OpenRouter before releasing roster changes.

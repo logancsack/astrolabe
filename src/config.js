@@ -78,7 +78,7 @@ function createConfig(env = process.env) {
     CLASSIFIER_MODEL_KEY: String(env.ASTROLABE_CLASSIFIER_MODEL_KEY || "nano")
       .trim()
       .toLowerCase(),
-    SELF_CHECK_MODEL_KEY: String(env.ASTROLABE_SELF_CHECK_MODEL_KEY || "mini")
+    SELF_CHECK_MODEL_KEY: String(env.ASTROLABE_SELF_CHECK_MODEL_KEY || "nano")
       .trim()
       .toLowerCase(),
     CLASSIFIER_CONTEXT_MESSAGES: clampInt(env.ASTROLABE_CONTEXT_MESSAGES, 8, 3, 20),

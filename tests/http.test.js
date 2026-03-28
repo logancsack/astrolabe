@@ -166,7 +166,8 @@ test("GET /v1/models?view=raw returns the static checked-in roster", async () =>
     const response = await requestJson(port, { path: "/v1/models?view=raw" });
     assert.equal(response.status, 200);
     assert.ok(response.body.data.some((model) => model.id === "minimax/minimax-m2.7"));
-    assert.ok(response.body.data.some((model) => model.id === "openai/gpt-5.4-nano"));
+    assert.ok(response.body.data.some((model) => model.id === "openai/gpt-5-nano"));
+    assert.ok(Array.isArray(response.body.buckets.active_defaults));
   } finally {
     server.close();
   }
@@ -373,8 +374,9 @@ test("non-stream chat responses include routing headers and astrolabe metadata",
       });
       assert.equal(response.status, 200);
       assert.equal(response.headers["x-astrolabe-category"], "retrieval");
-      assert.equal(response.headers["x-astrolabe-initial-model"], "openai/gpt-5.4-nano");
-      assert.equal(response.headers["x-astrolabe-final-model"], "openai/gpt-5.4-nano");
+      assert.equal(response.headers["x-astrolabe-action-class"], "casual_chat");
+      assert.equal(response.headers["x-astrolabe-initial-model"], "qwen/qwen3.5-flash-02-23");
+      assert.equal(response.headers["x-astrolabe-final-model"], "qwen/qwen3.5-flash-02-23");
       assert.equal(response.body.astrolabe.category, "retrieval");
       assert.equal(response.body.choices[0].message.content, "Sunny and 72F.");
     });
@@ -552,7 +554,7 @@ test("responses endpoint falls back to chat when responses upstream is retryably
       assert.equal(response.status, 200);
       assert.equal(response.body.object, "response");
       assert.equal(response.body.output[0].content[0].text, "Fallback succeeded.");
-      assert.ok(calledUrls.some((url) => url.endsWith("/responses")));
+      assert.ok(calledUrls.filter((url) => url.endsWith("/responses")).length >= 2);
       assert.ok(calledUrls.some((url) => url.endsWith("/chat/completions")));
     });
   } finally {
@@ -594,7 +596,7 @@ test("multimodal requests retry multimodal-capable lane candidates first", { con
           }
         };
       }
-      if (payload.model === "google/gemini-3.1-flash-lite-preview") {
+      if (payload.model === "qwen/qwen3.5-plus-02-15") {
         return {
           status: 200,
           data: {
@@ -625,8 +627,8 @@ test("multimodal requests retry multimodal-capable lane candidates first", { con
         }
       });
       assert.equal(response.status, 200);
-      assert.deepEqual(attempts.slice(0, 2), ["moonshotai/kimi-k2.5", "google/gemini-3.1-flash-lite-preview"]);
-      assert.equal(response.headers["x-astrolabe-final-model"], "google/gemini-3.1-flash-lite-preview");
+      assert.deepEqual(attempts.slice(0, 3), ["moonshotai/kimi-k2.5", "moonshotai/kimi-k2.5", "qwen/qwen3.5-plus-02-15"]);
+      assert.equal(response.headers["x-astrolabe-final-model"], "qwen/qwen3.5-plus-02-15");
     });
   } finally {
     server.close();
@@ -635,7 +637,7 @@ test("multimodal requests retry multimodal-capable lane candidates first", { con
 
 test("forced model bypasses classifier and verifier work", { concurrency: false }, async () => {
   const { app: forcedApp } = loadServerFresh({
-    ASTROLABE_FORCE_MODEL: "openai/gpt-5.4-nano"
+    ASTROLABE_FORCE_MODEL: "openai/gpt-5-nano"
   });
   const server = forcedApp.listen(0);
   try {
@@ -643,7 +645,7 @@ test("forced model bypasses classifier and verifier work", { concurrency: false 
     const upstreamModels = [];
     await withAxiosStub(async (url, payload) => {
       upstreamModels.push(payload.model);
-      assert.equal(payload.model, "openai/gpt-5.4-nano");
+      assert.equal(payload.model, "openai/gpt-5-nano");
       return {
         status: 200,
         data: {
@@ -664,9 +666,66 @@ test("forced model bypasses classifier and verifier work", { concurrency: false 
         }
       });
       assert.equal(response.status, 200);
-      assert.deepEqual(upstreamModels, ["openai/gpt-5.4-nano"]);
+      assert.deepEqual(upstreamModels, ["openai/gpt-5-nano"]);
       assert.equal(response.headers["x-astrolabe-route-label"], "FORCED");
-      assert.equal(response.headers["x-astrolabe-final-model"], "openai/gpt-5.4-nano");
+      assert.equal(response.headers["x-astrolabe-final-model"], "openai/gpt-5-nano");
+    });
+  } finally {
+    server.close();
+  }
+});
+
+test("m27 chat payload strips unsupported parameters before upstream dispatch", { concurrency: false }, async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const upstreamPayloads = [];
+    await withAxiosStub(async (url, payload) => {
+      if (isClassifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ category: "planning", complexity: "standard", confidence: 5 }) } }]
+          }
+        };
+      }
+      if (isVerifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ score: 5, reason: "confident" }) } }]
+          }
+        };
+      }
+      upstreamPayloads.push(payload);
+      return {
+        status: 200,
+        data: {
+          id: "chatcmpl-sanitize",
+          object: "chat.completion",
+          created: 1,
+          choices: [{ message: { role: "assistant", content: "Sanitized." } }],
+          usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 }
+        }
+      };
+    }, async () => {
+      const response = await requestJson(port, {
+        method: "POST",
+        path: "/v1/chat/completions",
+        body: {
+          stream: false,
+          temperature: 0.2,
+          parallel_tool_calls: true,
+          verbosity: "high",
+          messages: [{ role: "user", content: "Create a short implementation plan." }]
+        }
+      });
+      assert.equal(response.status, 200);
+      const m27Payload = upstreamPayloads.find((payload) => payload.model === "minimax/minimax-m2.7");
+      assert.ok(m27Payload);
+      assert.equal("parallel_tool_calls" in m27Payload, false);
+      assert.equal("verbosity" in m27Payload, false);
+      assert.equal(m27Payload.temperature, 0.2);
     });
   } finally {
     server.close();
