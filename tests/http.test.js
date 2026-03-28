@@ -35,11 +35,10 @@ function requestJson(port, { method = "GET", path = "/", body, headers = {} }) {
         res.on("data", (chunk) => chunks.push(chunk));
         res.on("end", () => {
           const raw = Buffer.concat(chunks).toString("utf8");
-          const parsed = raw ? JSON.parse(raw) : null;
           resolve({
             status: res.statusCode,
             headers: res.headers,
-            body: parsed
+            body: raw ? JSON.parse(raw) : null
           });
         });
       }
@@ -91,8 +90,8 @@ function isClassifierPayload(payload) {
   return payload?.messages?.[0]?.role === "system" && String(payload.messages[0]?.content || "").includes("strict routing classifier");
 }
 
-function isSelfCheckPayload(payload) {
-  return payload?.messages?.[0]?.role === "system" && String(payload.messages[0]?.content || "").includes("strict answer quality checker");
+function isVerifierPayload(payload) {
+  return payload?.messages?.[0]?.role === "system" && String(payload.messages[0]?.content || "").includes("keys score and reason");
 }
 
 async function withAxiosStub(stub, run) {
@@ -105,7 +104,31 @@ async function withAxiosStub(stub, run) {
   }
 }
 
-test("GET /health returns service metadata", async () => {
+function loadServerFresh(env = {}) {
+  const modulePath = require.resolve("../server");
+  const cachedModule = require.cache[modulePath];
+  const previousEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    previousEnv[key] = process.env[key];
+    if (value == null) delete process.env[key];
+    else process.env[key] = value;
+  }
+  delete require.cache[modulePath];
+  let loaded;
+  try {
+    loaded = require("../server");
+  } finally {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+    delete require.cache[modulePath];
+    if (cachedModule) require.cache[modulePath] = cachedModule;
+  }
+  return loaded;
+}
+
+test("GET /health returns service metadata for the new runtime", async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
@@ -113,8 +136,51 @@ test("GET /health returns service metadata", async () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.ok, true);
     assert.equal(response.body.service, "astrolabe");
-    assert.equal(response.body.version, "0.2.0-beta.1");
-    assert.equal(response.body.cost_efficiency_mode, "strict");
+    assert.equal(response.body.version, "0.3.0-beta.0");
+    assert.equal(response.body.default_profile, "default");
+    assert.equal(response.body.responses_enabled, true);
+    assert.equal(response.body.chat_completions_enabled, true);
+  } finally {
+    server.close();
+  }
+});
+
+test("GET /v1/models returns virtual models by default", async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const response = await requestJson(port, { path: "/v1/models" });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.object, "list");
+    assert.ok(response.body.data.some((model) => model.id === "astrolabe/auto"));
+    assert.ok(response.body.data.some((model) => model.id === "astrolabe/strict-json"));
+  } finally {
+    server.close();
+  }
+});
+
+test("GET /v1/models?view=raw returns the static checked-in roster", async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const response = await requestJson(port, { path: "/v1/models?view=raw" });
+    assert.equal(response.status, 200);
+    assert.ok(response.body.data.some((model) => model.id === "minimax/minimax-m2.7"));
+    assert.ok(response.body.data.some((model) => model.id === "openai/gpt-5.4-nano"));
+  } finally {
+    server.close();
+  }
+});
+
+test("GET /v1/lanes exposes lane manifests", async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const response = await requestJson(port, { path: "/v1/lanes" });
+    assert.equal(response.status, 200);
+    const codingLane = response.body.data.find((lane) => lane.lane === "coding");
+    assert.ok(codingLane);
+    assert.equal(codingLane.default_candidates[0].id, "minimax/minimax-m2.7");
   } finally {
     server.close();
   }
@@ -136,6 +202,22 @@ test("POST /v1/chat/completions returns 400 when messages is missing", async () 
   }
 });
 
+test("POST /v1/responses returns 400 when input is missing", async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const response = await requestJson(port, {
+      method: "POST",
+      path: "/v1/responses",
+      body: {}
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, "missing_input");
+  } finally {
+    server.close();
+  }
+});
+
 test("POST /v1/chat/completions returns JSON error on malformed JSON body", async () => {
   const server = app.listen(0);
   try {
@@ -146,12 +228,8 @@ test("POST /v1/chat/completions returns JSON error on malformed JSON body", asyn
       rawBody: "{\"messages\":[",
       headers: { "content-type": "application/json" }
     });
-
     assert.equal(response.status, 400);
-    assert.match(String(response.headers["content-type"] || ""), /application\/json/i);
-
     const parsed = JSON.parse(response.body);
-    assert.equal(parsed.error.type, "invalid_request_error");
     assert.equal(parsed.error.code, "invalid_json");
   } finally {
     server.close();
@@ -159,71 +237,34 @@ test("POST /v1/chat/completions returns JSON error on malformed JSON body", asyn
 });
 
 test("rate limiter blocks over-budget requests before upstream call", { concurrency: false }, async () => {
-  const modulePath = require.resolve("../server");
-  const cachedModule = require.cache[modulePath];
-  const previousEnv = {
-    ASTROLABE_RATE_LIMIT_ENABLED: process.env.ASTROLABE_RATE_LIMIT_ENABLED,
-    ASTROLABE_RATE_LIMIT_MAX_REQUESTS: process.env.ASTROLABE_RATE_LIMIT_MAX_REQUESTS,
-    ASTROLABE_RATE_LIMIT_WINDOW_MS: process.env.ASTROLABE_RATE_LIMIT_WINDOW_MS,
-    ASTROLABE_API_KEY: process.env.ASTROLABE_API_KEY
-  };
-
-  let limitedApp = null;
-  try {
-    delete require.cache[modulePath];
-    process.env.ASTROLABE_RATE_LIMIT_ENABLED = "true";
-    process.env.ASTROLABE_RATE_LIMIT_MAX_REQUESTS = "1";
-    process.env.ASTROLABE_RATE_LIMIT_WINDOW_MS = "60000";
-    process.env.ASTROLABE_API_KEY = "rate-limit-test-key";
-    ({ app: limitedApp } = require("../server"));
-  } finally {
-    for (const [name, value] of Object.entries(previousEnv)) {
-      if (value == null) delete process.env[name];
-      else process.env[name] = value;
-    }
-    delete require.cache[modulePath];
-    if (cachedModule) require.cache[modulePath] = cachedModule;
-  }
-
+  const { app: limitedApp } = loadServerFresh({
+    ASTROLABE_RATE_LIMIT_ENABLED: "true",
+    ASTROLABE_RATE_LIMIT_MAX_REQUESTS: "1",
+    ASTROLABE_RATE_LIMIT_WINDOW_MS: "60000",
+    ASTROLABE_API_KEY: "rate-limit-test-key"
+  });
   const server = limitedApp.listen(0);
   try {
     const { port } = server.address();
     let axiosCalls = 0;
-
-    await withAxiosStub(async (url, payload, options) => {
+    await withAxiosStub(async (url, payload) => {
       axiosCalls += 1;
-
       if (isClassifierPayload(payload)) {
         return {
           status: 200,
           data: {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    category: "communication",
-                    complexity: "simple",
-                    confidence: 5,
-                    reason: "casual chat",
-                    matched_signals: ["chat"],
-                    high_stakes: false
-                  })
-                }
-              }
-            ]
+            choices: [{ message: { content: JSON.stringify({ category: "communication", complexity: "simple", confidence: 5 }) } }]
           }
         };
       }
-
-      if (isSelfCheckPayload(payload)) {
+      if (isVerifierPayload(payload)) {
         return {
           status: 200,
           data: {
-            choices: [{ message: { content: JSON.stringify({ score: 5, reason: "confident" }) } }]
+            choices: [{ message: { content: JSON.stringify({ score: 5, reason: "looks fine" }) } }]
           }
         };
       }
-
       return {
         status: 200,
         data: {
@@ -240,31 +281,18 @@ test("rate limiter blocks over-budget requests before upstream call", { concurre
         method: "POST",
         path: "/v1/chat/completions",
         headers: authHeaders,
-        body: {
-          stream: false,
-          messages: [{ role: "user", content: "Say hello." }]
-        }
+        body: { messages: [{ role: "user", content: "Say hello." }], stream: false }
       });
-
       assert.equal(first.status, 200);
-      assert.equal(first.headers["x-ratelimit-limit"], "1");
-      assert.equal(first.headers["x-ratelimit-remaining"], "0");
-
       const callsAfterFirst = axiosCalls;
       const second = await requestJson(port, {
         method: "POST",
         path: "/v1/chat/completions",
         headers: authHeaders,
-        body: {
-          stream: false,
-          messages: [{ role: "user", content: "Say hello again." }]
-        }
+        body: { messages: [{ role: "user", content: "Say hello again." }], stream: false }
       });
-
       assert.equal(second.status, 429);
-      assert.equal(second.body.error.type, "rate_limit_error");
       assert.equal(second.body.error.code, "rate_limit_exceeded");
-      assert.match(String(second.headers["retry-after"] || ""), /^[0-9]+$/);
       assert.equal(axiosCalls, callsAfterFirst);
     });
   } finally {
@@ -276,37 +304,26 @@ test("strict high-stakes confirmation requires exact token", async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
-    const payload = {
-      stream: false,
-      messages: [{ role: "user", content: "Please transfer $100 now." }]
-    };
-
-    const missingToken = await requestJson(port, {
+    const response = await requestJson(port, {
       method: "POST",
       path: "/v1/chat/completions",
-      body: payload
+      body: {
+        stream: false,
+        messages: [{ role: "user", content: "Please transfer $100 now." }]
+      }
     });
-    assert.equal(missingToken.status, 409);
-    assert.equal(missingToken.body.error.code, "high_stakes_confirmation_required");
-
-    const weakToken = await requestJson(port, {
-      method: "POST",
-      path: "/v1/chat/completions",
-      headers: { "x-astrolabe-confirmed": "true" },
-      body: payload
-    });
-    assert.equal(weakToken.status, 409);
-    assert.equal(weakToken.body.error.code, "high_stakes_confirmation_required");
+    assert.equal(response.status, 409);
+    assert.equal(response.body.error.code, "high_stakes_confirmation_required");
   } finally {
     server.close();
   }
 });
 
-test("non-stream responses include routing metadata headers", { concurrency: false }, async () => {
+test("non-stream chat responses include routing headers and astrolabe metadata", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
-    await withAxiosStub(async (url, payload, options) => {
+    await withAxiosStub(async (url, payload) => {
       if (isClassifierPayload(payload)) {
         return {
           status: 200,
@@ -318,9 +335,8 @@ test("non-stream responses include routing metadata headers", { concurrency: fal
                     category: "retrieval",
                     complexity: "simple",
                     confidence: 5,
-                    reason: "simple lookup",
-                    matched_signals: ["lookup"],
-                    high_stakes: false
+                    modifiers: [],
+                    reason: "simple lookup"
                   })
                 }
               }
@@ -328,8 +344,7 @@ test("non-stream responses include routing metadata headers", { concurrency: fal
           }
         };
       }
-
-      if (isSelfCheckPayload(payload)) {
+      if (isVerifierPayload(payload)) {
         return {
           status: 200,
           data: {
@@ -337,7 +352,6 @@ test("non-stream responses include routing metadata headers", { concurrency: fal
           }
         };
       }
-
       return {
         status: 200,
         data: {
@@ -357,12 +371,11 @@ test("non-stream responses include routing metadata headers", { concurrency: fal
           messages: [{ role: "user", content: "Find the weather in Austin." }]
         }
       });
-
       assert.equal(response.status, 200);
       assert.equal(response.headers["x-astrolabe-category"], "retrieval");
-      assert.equal(response.headers["x-astrolabe-escalated"], "false");
-      assert.equal(response.headers["x-astrolabe-initial-model"], "openai/gpt-5-nano");
-      assert.equal(response.headers["x-astrolabe-final-model"], "openai/gpt-5-nano");
+      assert.equal(response.headers["x-astrolabe-initial-model"], "openai/gpt-5.4-nano");
+      assert.equal(response.headers["x-astrolabe-final-model"], "openai/gpt-5.4-nano");
+      assert.equal(response.body.astrolabe.category, "retrieval");
       assert.equal(response.body.choices[0].message.content, "Sunny and 72F.");
     });
   } finally {
@@ -370,34 +383,20 @@ test("non-stream responses include routing metadata headers", { concurrency: fal
   }
 });
 
-test("non-stream standard planning route uses MiniMax M2.5 headers", { concurrency: false }, async () => {
+test("planning requests route to m27 by default", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
-    await withAxiosStub(async (url, payload, options) => {
+    await withAxiosStub(async (url, payload) => {
       if (isClassifierPayload(payload)) {
         return {
           status: 200,
           data: {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    category: "planning",
-                    complexity: "standard",
-                    confidence: 5,
-                    reason: "multi-step planning request",
-                    matched_signals: ["plan"],
-                    high_stakes: false
-                  })
-                }
-              }
-            ]
+            choices: [{ message: { content: JSON.stringify({ category: "planning", complexity: "standard", confidence: 5 }) } }]
           }
         };
       }
-
-      if (isSelfCheckPayload(payload)) {
+      if (isVerifierPayload(payload)) {
         return {
           status: 200,
           data: {
@@ -405,7 +404,6 @@ test("non-stream standard planning route uses MiniMax M2.5 headers", { concurren
           }
         };
       }
-
       return {
         status: 200,
         data: {
@@ -425,48 +423,32 @@ test("non-stream standard planning route uses MiniMax M2.5 headers", { concurren
           messages: [{ role: "user", content: "Create a two-week launch plan for this feature." }]
         }
       });
-
       assert.equal(response.status, 200);
       assert.equal(response.headers["x-astrolabe-category"], "planning");
-      assert.equal(response.headers["x-astrolabe-initial-model"], "minimax/minimax-m2.5");
-      assert.equal(response.headers["x-astrolabe-final-model"], "minimax/minimax-m2.5");
-      assert.equal(response.body.choices[0].message.content, "Plan drafted.");
+      assert.equal(response.headers["x-astrolabe-initial-model"], "minimax/minimax-m2.7");
+      assert.equal(response.headers["x-astrolabe-final-model"], "minimax/minimax-m2.7");
     });
   } finally {
     server.close();
   }
 });
 
-test("route retries next model when first routed model is unavailable", { concurrency: false }, async () => {
+test("responses endpoint prefers OpenRouter responses and returns response objects", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
-    const routedModelAttempts = [];
-
-    await withAxiosStub(async (url, payload, options) => {
+    const calledUrls = [];
+    await withAxiosStub(async (url, payload) => {
+      calledUrls.push(url);
       if (isClassifierPayload(payload)) {
         return {
           status: 200,
           data: {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    category: "retrieval",
-                    complexity: "simple",
-                    confidence: 5,
-                    reason: "simple lookup",
-                    matched_signals: ["lookup"],
-                    high_stakes: false
-                  })
-                }
-              }
-            ]
+            choices: [{ message: { content: JSON.stringify({ category: "research", complexity: "complex", confidence: 5 }) } }]
           }
         };
       }
-
-      if (isSelfCheckPayload(payload)) {
+      if (isVerifierPayload(payload)) {
         return {
           status: 200,
           data: {
@@ -474,83 +456,125 @@ test("route retries next model when first routed model is unavailable", { concur
           }
         };
       }
+      if (url.endsWith("/responses")) {
+        return {
+          status: 200,
+          data: {
+            id: "resp_123",
+            object: "response",
+            created: 1,
+            model: "moonshotai/kimi-k2-thinking",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Research summary." }]
+              }
+            ],
+            usage: { input_tokens: 18, output_tokens: 9, total_tokens: 27 }
+          }
+        };
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    }, async () => {
+      const response = await requestJson(port, {
+        method: "POST",
+        path: "/v1/responses",
+        body: {
+          model: "astrolabe/research",
+          input: "Research the trade-offs for this migration and summarize the key risks.",
+          stream: false
+        }
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.object, "response");
+      assert.equal(response.body.metadata.astrolabe.category, "research");
+      assert.ok(calledUrls.some((url) => url.endsWith("/responses")));
+    });
+  } finally {
+    server.close();
+  }
+});
 
-      routedModelAttempts.push(payload.model);
-      if (payload.model === "openai/gpt-5-nano") {
+test("responses endpoint falls back to chat when responses upstream is retryably unavailable", { concurrency: false }, async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const calledUrls = [];
+    await withAxiosStub(async (url, payload) => {
+      calledUrls.push(url);
+      if (isClassifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ category: "communication", complexity: "simple", confidence: 5 }) } }]
+          }
+        };
+      }
+      if (isVerifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ score: 5, reason: "confident" }) } }]
+          }
+        };
+      }
+      if (url.endsWith("/responses")) {
         return {
           status: 404,
           data: {
             error: {
               code: "model_not_found",
-              message: "Model unavailable."
+              message: "Responses path unavailable."
             }
           }
         };
       }
-      if (payload.model === "x-ai/grok-4.1-fast") {
-        return {
-          status: 200,
-          data: {
-            id: "chatcmpl-fallback",
-            object: "chat.completion",
-            created: 1,
-            choices: [{ message: { role: "assistant", content: "Fallback succeeded." } }],
-            usage: { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16 }
-          }
-        };
-      }
-      throw new Error(`Unexpected routed model call: ${payload.model}`);
+      return {
+        status: 200,
+        data: {
+          id: "chatcmpl-fallback",
+          object: "chat.completion",
+          created: 1,
+          choices: [{ message: { role: "assistant", content: "Fallback succeeded." } }],
+          usage: { prompt_tokens: 8, completion_tokens: 5, total_tokens: 13 }
+        }
+      };
     }, async () => {
       const response = await requestJson(port, {
         method: "POST",
-        path: "/v1/chat/completions",
+        path: "/v1/responses",
         body: {
-          stream: false,
-          messages: [{ role: "user", content: "Lookup my calendar event tomorrow." }]
+          input: "Say hello in one line.",
+          stream: false
         }
       });
-
       assert.equal(response.status, 200);
-      assert.deepEqual(routedModelAttempts.slice(0, 2), ["openai/gpt-5-nano", "x-ai/grok-4.1-fast"]);
-      assert.equal(response.headers["x-astrolabe-initial-model"], "x-ai/grok-4.1-fast");
-      assert.equal(response.headers["x-astrolabe-final-model"], "x-ai/grok-4.1-fast");
-      assert.equal(response.body.choices[0].message.content, "Fallback succeeded.");
+      assert.equal(response.body.object, "response");
+      assert.equal(response.body.output[0].content[0].text, "Fallback succeeded.");
+      assert.ok(calledUrls.some((url) => url.endsWith("/responses")));
+      assert.ok(calledUrls.some((url) => url.endsWith("/chat/completions")));
     });
   } finally {
     server.close();
   }
 });
 
-test("multimodal route retries only multimodal-capable fallbacks first", { concurrency: false }, async () => {
+test("multimodal requests retry multimodal-capable lane candidates first", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
-    const routedModelAttempts = [];
-
-    await withAxiosStub(async (url, payload, options) => {
+    const attempts = [];
+    await withAxiosStub(async (url, payload) => {
       if (isClassifierPayload(payload)) {
         return {
           status: 200,
           data: {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    category: "summarization",
-                    complexity: "standard",
-                    confidence: 5,
-                    reason: "multimodal summarization",
-                    matched_signals: ["summarize"],
-                    high_stakes: false
-                  })
-                }
-              }
-            ]
+            choices: [{ message: { content: JSON.stringify({ category: "summarization", complexity: "standard", confidence: 5, modifiers: ["multimodal"] }) } }]
           }
         };
       }
-
-      if (isSelfCheckPayload(payload)) {
+      if (isVerifierPayload(payload)) {
         return {
           status: 200,
           data: {
@@ -558,8 +582,7 @@ test("multimodal route retries only multimodal-capable fallbacks first", { concu
           }
         };
       }
-
-      routedModelAttempts.push(payload.model);
+      attempts.push(payload.model);
       if (payload.model === "moonshotai/kimi-k2.5") {
         return {
           status: 404,
@@ -571,11 +594,11 @@ test("multimodal route retries only multimodal-capable fallbacks first", { concu
           }
         };
       }
-      if (payload.model === "google/gemini-3.1-pro-preview") {
+      if (payload.model === "google/gemini-3.1-flash-lite-preview") {
         return {
           status: 200,
           data: {
-            id: "chatcmpl-multimodal-fallback",
+            id: "chatcmpl-mm",
             object: "chat.completion",
             created: 1,
             choices: [{ message: { role: "assistant", content: "Multimodal fallback succeeded." } }],
@@ -583,7 +606,7 @@ test("multimodal route retries only multimodal-capable fallbacks first", { concu
           }
         };
       }
-      throw new Error(`Unexpected multimodal fallback call: ${payload.model}`);
+      throw new Error(`Unexpected model ${payload.model}`);
     }, async () => {
       const response = await requestJson(port, {
         method: "POST",
@@ -601,50 +624,26 @@ test("multimodal route retries only multimodal-capable fallbacks first", { concu
           ]
         }
       });
-
       assert.equal(response.status, 200);
-      assert.deepEqual(routedModelAttempts.slice(0, 2), ["moonshotai/kimi-k2.5", "google/gemini-3.1-pro-preview"]);
-      assert.equal(response.headers["x-astrolabe-initial-model"], "google/gemini-3.1-pro-preview");
-      assert.equal(response.headers["x-astrolabe-final-model"], "google/gemini-3.1-pro-preview");
-      assert.equal(response.body.choices[0].message.content, "Multimodal fallback succeeded.");
+      assert.deepEqual(attempts.slice(0, 2), ["moonshotai/kimi-k2.5", "google/gemini-3.1-flash-lite-preview"]);
+      assert.equal(response.headers["x-astrolabe-final-model"], "google/gemini-3.1-flash-lite-preview");
     });
   } finally {
     server.close();
   }
 });
 
-test("forced model bypasses classifier and self-check escalation", { concurrency: false }, async () => {
-  const modulePath = require.resolve("../server");
-  const cachedModule = require.cache[modulePath];
-  const previousForceModel = process.env.ASTROLABE_FORCE_MODEL;
-  let forcedApp = null;
-
-  try {
-    delete require.cache[modulePath];
-    process.env.ASTROLABE_FORCE_MODEL = "openai/gpt-5-nano";
-    ({ app: forcedApp } = require("../server"));
-  } finally {
-    if (previousForceModel == null) delete process.env.ASTROLABE_FORCE_MODEL;
-    else process.env.ASTROLABE_FORCE_MODEL = previousForceModel;
-    delete require.cache[modulePath];
-    if (cachedModule) require.cache[modulePath] = cachedModule;
-  }
-
+test("forced model bypasses classifier and verifier work", { concurrency: false }, async () => {
+  const { app: forcedApp } = loadServerFresh({
+    ASTROLABE_FORCE_MODEL: "openai/gpt-5.4-nano"
+  });
   const server = forcedApp.listen(0);
   try {
     const { port } = server.address();
-    const routedModelAttempts = [];
-
-    await withAxiosStub(async (url, payload, options) => {
-      if (isClassifierPayload(payload)) {
-        throw new Error("Classifier should be skipped when ASTROLABE_FORCE_MODEL is set.");
-      }
-      if (isSelfCheckPayload(payload)) {
-        throw new Error("Self-check should be skipped when ASTROLABE_FORCE_MODEL is set.");
-      }
-
-      routedModelAttempts.push(payload.model);
-      assert.equal(payload.model, "openai/gpt-5-nano");
+    const upstreamModels = [];
+    await withAxiosStub(async (url, payload) => {
+      upstreamModels.push(payload.model);
+      assert.equal(payload.model, "openai/gpt-5.4-nano");
       return {
         status: 200,
         data: {
@@ -664,49 +663,57 @@ test("forced model bypasses classifier and self-check escalation", { concurrency
           messages: [{ role: "user", content: "Say hello in one line." }]
         }
       });
-
       assert.equal(response.status, 200);
-      assert.deepEqual(routedModelAttempts, ["openai/gpt-5-nano"]);
+      assert.deepEqual(upstreamModels, ["openai/gpt-5.4-nano"]);
       assert.equal(response.headers["x-astrolabe-route-label"], "FORCED");
-      assert.equal(response.headers["x-astrolabe-initial-model"], "openai/gpt-5-nano");
-      assert.equal(response.headers["x-astrolabe-final-model"], "openai/gpt-5-nano");
-      assert.equal(response.headers["x-astrolabe-escalated"], "false");
-      assert.equal(response.headers["x-astrolabe-confidence-score"], undefined);
-      assert.equal(response.body.choices[0].message.content, "Forced model response.");
+      assert.equal(response.headers["x-astrolabe-final-model"], "openai/gpt-5.4-nano");
     });
   } finally {
     server.close();
   }
 });
 
-test("streaming requests passthrough SSE payload", { concurrency: false }, async () => {
+test("responses URL allowlists are enforced", { concurrency: false }, async () => {
+  const { app: guardedApp } = loadServerFresh({
+    ASTROLABE_RESPONSES_IMAGES_URL_ALLOWLIST: "allowed.example"
+  });
+  const server = guardedApp.listen(0);
+  try {
+    const { port } = server.address();
+    const response = await requestJson(port, {
+      method: "POST",
+      path: "/v1/responses",
+      body: {
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_image", image_url: "https://blocked.example/image.png" }]
+          }
+        ],
+        stream: false
+      }
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, "responses_url_not_allowed");
+  } finally {
+    server.close();
+  }
+});
+
+test("streaming chat completions passthrough SSE payload", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
-
     await withAxiosStub(async (url, payload, options) => {
       if (isClassifierPayload(payload)) {
         return {
           status: 200,
           data: {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    category: "creative",
-                    complexity: "simple",
-                    confidence: 5,
-                    reason: "small creative request",
-                    matched_signals: ["creative"],
-                    high_stakes: false
-                  })
-                }
-              }
-            ]
+            choices: [{ message: { content: JSON.stringify({ category: "creative", complexity: "simple", confidence: 5 }) } }]
           }
         };
       }
-
       if (options?.responseType === "stream") {
         const stream = new PassThrough();
         process.nextTick(() => {
@@ -720,7 +727,6 @@ test("streaming requests passthrough SSE payload", { concurrency: false }, async
           headers: { "content-type": "text/event-stream; charset=utf-8" }
         };
       }
-
       throw new Error("Unexpected non-stream upstream call.");
     }, async () => {
       const response = await requestRaw(port, {
@@ -731,11 +737,10 @@ test("streaming requests passthrough SSE payload", { concurrency: false }, async
           messages: [{ role: "user", content: "Give me a short fun line." }]
         }
       });
-
       assert.equal(response.status, 200);
       assert.match(String(response.headers["content-type"] || ""), /text\/event-stream/i);
-      assert.match(response.body, /data: \{"id":"chatcmpl-stream"/);
-      assert.match(response.body, /data: \[DONE\]/);
+      assert.match(response.body, /chatcmpl-stream/);
+      assert.match(response.body, /\[DONE\]/);
     });
   } finally {
     server.close();

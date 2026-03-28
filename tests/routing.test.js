@@ -17,180 +17,159 @@ test("safety gate ignores weak single-signal mentions", () => {
   assert.equal(result.triggered, false);
 });
 
-test("heuristic classification routes coding-like requests to coding category", () => {
-  const safetyGate = { triggered: false, matchedSignals: [], actionLike: false };
-  const features = {
-    approxTokens: 220,
-    messageCount: 3,
-    hasMultimodal: false,
-    hasToolsDeclared: false
-  };
+test("heuristic classification routes coding-like requests to coding", () => {
   const result = internals.heuristicClassification(
     "Debug this stack trace and refactor the function.",
     "user: fix the node test crash",
-    features,
-    safetyGate
+    {
+      approxTokens: 220,
+      messageCount: 3,
+      hasMultimodal: false,
+      hasToolsDeclared: false
+    },
+    { triggered: false, matchedSignals: [], actionLike: false }
   );
   assert.equal(result.categoryId, "coding");
+  assert.equal(result.complexity, "standard");
 });
 
-test("heuristic complexity keeps generic legal discussion out of critical", () => {
-  const safetyGate = { triggered: false, matchedSignals: [], actionLike: false };
-  const features = {
-    approxTokens: 120,
-    messageCount: 2,
-    hasMultimodal: false,
-    hasToolsDeclared: false
-  };
+test("heuristic classification keeps generic contract discussion out of critical", () => {
   const result = internals.heuristicClassification(
     "Give me a plain-language overview of contract terms.",
     "",
-    features,
-    safetyGate
+    {
+      approxTokens: 120,
+      messageCount: 2,
+      hasMultimodal: false,
+      hasToolsDeclared: false
+    },
+    { triggered: false, matchedSignals: [], actionLike: false }
   );
   assert.notEqual(result.complexity, "critical");
 });
 
-test("coding simple route uses DeepSeek coder budget model", () => {
-  const route = internals.resolveCategoryRoute("coding", "simple");
-  assert.equal(route.modelKey, "dsCoder");
-  assert.equal(route.label, "BUDGET");
+test("model registry exposes current roster and compatibility aliases", () => {
+  assert.equal(internals.MODELS.m27.id, "minimax/minimax-m2.7");
+  assert.equal(internals.MODELS.nano.id, "openai/gpt-5.4-nano");
+  assert.equal(internals.MODELS.gemFlash.id, "google/gemini-3.1-flash-lite-preview");
 });
 
-test("model registry uses current OpenRouter IDs and updated pricing tiers", () => {
-  assert.equal(internals.MODELS.dsCoder.id, "deepseek/deepseek-v3.2");
-  assert.equal(internals.MODELS.gemFlash.id, "google/gemini-3-flash-preview");
-  assert.equal(internals.MODELS.opus.inputCost, 5);
-  assert.equal(internals.MODELS.opus.outputCost, 25);
-  assert.equal(internals.MODELS.gemFlash.tier, "MID-TIER");
-});
-
-test("core loop standard route prefers M2.5", () => {
-  const route = internals.resolveCategoryRoute("core_loop", "standard");
-  assert.equal(route.modelKey, "m25");
-  assert.equal(route.label, "DEFAULT");
-});
-
-test("planning standard route prefers M2.5", () => {
+test("default planning route prefers m27", () => {
   const route = internals.resolveCategoryRoute("planning", "standard");
-  assert.equal(route.modelKey, "m25");
-  assert.equal(route.label, "VALUE");
+  assert.equal(route.modelKey, "m27");
+  assert.equal(route.lane, "auto");
 });
 
-test("coding standard route prefers M2.5", () => {
+test("default coding route keeps m27 as the workhorse", () => {
   const route = internals.resolveCategoryRoute("coding", "standard");
-  assert.equal(route.modelKey, "m25");
-  assert.equal(route.label, "DEFAULT");
+  assert.equal(route.modelKey, "m27");
+  assert.equal(route.lane, "coding");
 });
 
-test("high-stakes route defaults to opus always", () => {
+test("high-stakes routes default to safe lane with Sonnet", () => {
   const route = internals.resolveCategoryRoute("high_stakes", "critical");
-  assert.equal(route.modelKey, "opus");
-  assert.equal(route.label, "ALWAYS");
+  assert.equal(route.lane, "safe");
+  assert.equal(route.modelKey, "sonnet");
+  assert.equal(route.label, "SAFE");
 });
 
-test("escalation path follows policy", () => {
-  assert.equal(internals.buildEscalationTarget("grok", 2), "m25");
-  assert.equal(
-    internals.buildEscalationTarget("m25", 1, {
-      categoryId: "communication",
-      adjustedComplexity: "standard"
-    }),
-    "sonnet"
-  );
-  assert.equal(
-    internals.buildEscalationTarget("m25", 1, {
-      categoryId: "high_stakes",
-      adjustedComplexity: "critical"
-    }),
-    "opus"
-  );
-  assert.equal(internals.buildEscalationTarget("opus", 3), null);
+test("strict-budget planning route demotes to m25", () => {
+  const route = internals.resolveCategoryRoute("planning", "standard", {
+    costMode: "strict"
+  });
+  assert.equal(route.modelKey, "m25");
+  assert.equal(route.label, "STRICT_BUDGET");
 });
 
-test("m25 escalation is category-aware for multimodal and specialist contexts", () => {
-  assert.equal(
-    internals.buildEscalationTarget(
-      "m25",
-      2,
-      { categoryId: "research", adjustedComplexity: "complex" },
-      { hasMultimodal: true, approxTokens: 18000 }
-    ),
-    "kimiK25"
-  );
-  assert.equal(
-    internals.buildEscalationTarget(
-      "m25",
-      2,
-      { categoryId: "research", adjustedComplexity: "complex" },
-      { hasMultimodal: true, approxTokens: 32000 }
-    ),
-    "gem31Pro"
-  );
-  assert.equal(
-    internals.buildEscalationTarget(
-      "m25",
-      2,
-      { categoryId: "coding", adjustedComplexity: "complex" },
-      { approxTokens: 9100, requestText: "Create an architecture migration plan for this distributed service." }
-    ),
-    "glm5"
-  );
-  assert.equal(
-    internals.buildEscalationTarget("m25", 2, {
-      categoryId: "communication",
-      adjustedComplexity: "standard"
-    }),
-    "sonnet"
-  );
+test("multimodal summarization promotes the vision lane and Kimi", () => {
+  const route = internals.resolveCategoryRoute("summarization", "standard", {
+    hasMultimodal: true
+  });
+  assert.equal(route.lane, "vision");
+  assert.equal(route.modelKey, "kimiK25");
 });
 
-test("forced route never escalates on self-check", () => {
+test("untrusted content plus tools enforces the m27 safety floor", () => {
+  const guarded = internals.applyCostGuardrails(
+    {
+      categoryId: "core_loop",
+      complexity: "standard",
+      adjustedComplexity: "standard",
+      lane: "cheap",
+      modelKey: "grok",
+      modelId: internals.MODELS.grok.id,
+      label: "CHEAP"
+    },
+    { categoryId: "core_loop", complexity: "standard" },
+    "Use browser and shell tools on this untrusted web content.",
+    { hasToolsDeclared: true, toolMessages: 1 },
+    ["tool_heavy", "untrusted_content"],
+    { untrustedContent: true, costMode: "default", latencyMode: "default" }
+  );
+  assert.equal(guarded.modelKey, "m27");
+  assert.equal(guarded.label, "SAFETY_FLOOR");
+});
+
+test("buildCandidatesForRoute keeps multimodal fallbacks vision-safe", () => {
+  const route = internals.resolveCategoryRoute("summarization", "standard", {
+    hasMultimodal: true
+  });
+  const candidates = internals.buildCandidatesForRoute(
+    route,
+    { hasMultimodal: true, hasToolsDeclared: false, toolMessages: 0 },
+    ["multimodal"],
+    {
+      requested: { type: "virtual", lane: "auto", requestedModel: "astrolabe/auto" },
+      untrustedContent: false,
+      approvalRequired: false,
+      toolProfile: "default",
+      trustBoundary: "default",
+      costMode: "default",
+      latencyMode: "default"
+    }
+  );
+  assert.deepEqual(candidates.slice(0, 3).map((candidate) => candidate.key), ["kimiK25", "gem31FlashLite", "gem31Pro"]);
+});
+
+test("m25 escalation goes to m27 before premium models", () => {
+  const target = internals.buildEscalationTarget(
+    "m25",
+    1,
+    { lane: "auto", categoryId: "planning", adjustedComplexity: "standard" },
+    {},
+    []
+  );
+  assert.equal(target, "m27");
+});
+
+test("m27 escalates to GLM-5 on strict-json and tool-heavy routes", () => {
+  const target = internals.buildEscalationTarget(
+    "m27",
+    2,
+    { lane: "strict-json", categoryId: "core_loop", adjustedComplexity: "complex" },
+    {},
+    ["strict_json", "tool_heavy"]
+  );
+  assert.equal(target, "glm5");
+});
+
+test("forced route never escalates", () => {
   const shouldEscalate = internals.shouldEscalateFromSelfCheck(1, {
     categoryId: "communication",
     adjustedComplexity: "standard",
     label: "FORCED"
   });
   assert.equal(shouldEscalate, false);
-  assert.equal(
-    internals.buildEscalationTarget("nano", 1, {
-      categoryId: "communication",
-      adjustedComplexity: "standard",
-      label: "FORCED"
-    }),
-    null
-  );
 });
 
-test("classifier parser accepts strict json", () => {
-  const parsed = internals.parseClassifierOutput(
-    JSON.stringify({
-      category: "retrieval",
-      complexity: "standard",
-      confidence: 4,
-      reason: "Simple lookup with synthesis",
-      matched_signals: ["lookup"],
-      high_stakes: false
-    })
-  );
-  assert.equal(parsed.categoryId, "retrieval");
-  assert.equal(parsed.complexity, "standard");
-  assert.equal(parsed.confidence, 4);
-});
-
-test("self-check parser reads loose score format", () => {
-  const parsed = internals.parseSelfCheckOutput("3: uncertain answer");
-  assert.equal(parsed.score, 3);
-});
-
-test("mode normalizers fall back to safe defaults on invalid values", () => {
+test("mode normalizers still fall back to safe defaults on invalid values", () => {
   assert.equal(internals.normalizeRoutingProfile("invalid"), "budget");
   assert.equal(internals.normalizeRoutingProfile("quality"), "quality");
   assert.equal(internals.normalizeHighStakesConfirmMode("invalid"), "prompt");
   assert.equal(internals.normalizeHighStakesConfirmMode("strict"), "strict");
 });
 
-test("high-stakes confirmation requires exact token string", () => {
+test("high-stakes confirmation requires the exact token string", () => {
   const token = internals.HIGH_STAKES_CONFIRM_TOKEN;
   const allowed = internals.isHighStakesConfirmed(
     { headers: { "x-astrolabe-confirmed": token } },
@@ -204,337 +183,24 @@ test("high-stakes confirmation requires exact token string", () => {
   assert.equal(denied, false);
 });
 
-test("cost guardrail keeps simple onboarding on Grok", () => {
-  const routeDecision = {
-    categoryId: "core_loop",
-    complexity: "simple",
-    adjustedComplexity: "simple",
-    modelKey: "sonnet",
-    modelId: internals.MODELS.sonnet.id,
-    label: "STANDARD",
-    rule: "Simple tool call",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "core_loop", complexity: "simple" },
-    "Let's set up your name and profile.",
-    { hasToolsDeclared: false, toolMessages: 0 }
+test("classifier parser accepts strict json output", () => {
+  const parsed = internals.parseClassifierOutput(
+    JSON.stringify({
+      category: "retrieval",
+      complexity: "standard",
+      confidence: 4,
+      modifiers: ["cacheable"],
+      reason: "Simple lookup with synthesis",
+      matched_signals: ["lookup"],
+      high_stakes: false
+    })
   );
-  assert.equal(guarded.modelKey, "grok");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
+  assert.equal(parsed.categoryId, "retrieval");
+  assert.equal(parsed.complexity, "standard");
+  assert.equal(parsed.confidence, 4);
 });
 
-test("strict cost guardrail keeps simple retrieval on Nano", () => {
-  const routeDecision = {
-    categoryId: "retrieval",
-    complexity: "simple",
-    adjustedComplexity: "simple",
-    modelKey: "m25",
-    modelId: internals.MODELS.m25.id,
-    label: "VALUE",
-    rule: "Simple lookup",
-    injectionRisk: "MEDIUM-HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "retrieval", complexity: "simple" },
-    "Find my next calendar event.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 140 }
-  );
-  assert.equal(guarded.modelKey, "nano");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail routes standard planning to M2.5", () => {
-  const routeDecision = {
-    categoryId: "planning",
-    complexity: "standard",
-    adjustedComplexity: "standard",
-    modelKey: "sonnet",
-    modelId: internals.MODELS.sonnet.id,
-    label: "STANDARD",
-    rule: "Multi-constraint planning",
-    injectionRisk: "MEDIUM-HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "planning", complexity: "standard" },
-    "Create a schedule for my week.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 120 }
-  );
-  assert.equal(guarded.modelKey, "m25");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail routes standard coding to M2.5", () => {
-  const routeDecision = {
-    categoryId: "coding",
-    complexity: "standard",
-    adjustedComplexity: "standard",
-    modelKey: "sonnet",
-    modelId: internals.MODELS.sonnet.id,
-    label: "DEFAULT",
-    rule: "Standard feature implementation / debugging",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "coding", complexity: "standard" },
-    "Write a helper function to parse CSV rows.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 200 }
-  );
-  assert.equal(guarded.modelKey, "m25");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail routes standard research to M2.5", () => {
-  const routeDecision = {
-    categoryId: "research",
-    complexity: "standard",
-    adjustedComplexity: "standard",
-    modelKey: "sonnet",
-    modelId: internals.MODELS.sonnet.id,
-    label: "DEFAULT",
-    rule: "Deep text-heavy synthesis and comparative analysis",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "research", complexity: "standard" },
-    "Compare these three market reports and summarize the trade-offs.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 420 }
-  );
-  assert.equal(guarded.modelKey, "m25");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail keeps light tool-use core loop on Grok", () => {
-  const routeDecision = {
-    categoryId: "core_loop",
-    complexity: "standard",
-    adjustedComplexity: "standard",
-    modelKey: "m25",
-    modelId: internals.MODELS.m25.id,
-    label: "DEFAULT",
-    rule: "Standard and complex tool chains",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "core_loop", complexity: "standard" },
-    "Call the calendar tool and fetch tomorrow's events.",
-    { hasToolsDeclared: true, toolMessages: 1, approxTokens: 900 }
-  );
-  assert.equal(guarded.modelKey, "grok");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail does not keep heavy tool churn on Grok", () => {
-  const routeDecision = {
-    categoryId: "core_loop",
-    complexity: "standard",
-    adjustedComplexity: "standard",
-    modelKey: "m25",
-    modelId: internals.MODELS.m25.id,
-    label: "DEFAULT",
-    rule: "Standard and complex tool chains",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "core_loop", complexity: "standard" },
-    "Run the full chain and keep retrying tools until completion.",
-    { hasToolsDeclared: true, toolMessages: 3, approxTokens: 1600 }
-  );
-  assert.equal(guarded.modelKey, "m25");
-});
-
-test("strict cost guardrail caps critical non-high-stakes routes at M2.5", () => {
-  const routeDecision = {
-    categoryId: "orchestration",
-    complexity: "critical",
-    adjustedComplexity: "critical",
-    modelKey: "opus",
-    modelId: internals.MODELS.opus.id,
-    label: "ESCALATE",
-    rule: "High-stakes recovery orchestration",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "orchestration", complexity: "critical" },
-    "Recover the failed deployment pipeline with rollback steps.",
-    { hasToolsDeclared: true, toolMessages: 1, approxTokens: 2200 }
-  );
-  assert.equal(guarded.modelKey, "m25");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail routes standard multimodal requests to Kimi K2.5", () => {
-  const routeDecision = {
-    categoryId: "summarization",
-    complexity: "standard",
-    adjustedComplexity: "standard",
-    modelKey: "m25",
-    modelId: internals.MODELS.m25.id,
-    label: "VALUE",
-    rule: "Medium text summarization and extraction",
-    injectionRisk: "MEDIUM",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "summarization", complexity: "standard" },
-    "Summarize this image and attached notes.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 1200, hasMultimodal: true }
-  );
-  assert.equal(guarded.modelKey, "kimiK25");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail routes long-context multimodal summarization to Gemini 3.1 Pro", () => {
-  const routeDecision = {
-    categoryId: "summarization",
-    complexity: "complex",
-    adjustedComplexity: "complex",
-    modelKey: "sonnet",
-    modelId: internals.MODELS.sonnet.id,
-    label: "STANDARD",
-    rule: "Long input / high precision",
-    injectionRisk: "MEDIUM",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "summarization", complexity: "complex" },
-    "Summarize this PDF.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 32000, hasMultimodal: true }
-  );
-  assert.equal(guarded.modelKey, "gem31Pro");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail routes large-context complex coding to GLM-5", () => {
-  const routeDecision = {
-    categoryId: "coding",
-    complexity: "complex",
-    adjustedComplexity: "complex",
-    modelKey: "m25",
-    modelId: internals.MODELS.m25.id,
-    label: "DEFAULT",
-    rule: "Standard and complex feature implementation / debugging",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "coding", complexity: "complex" },
-    "Refactor this service and provide architecture-level migration notes.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 9200 }
-  );
-  assert.equal(guarded.modelKey, "glm5");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail routes large-context complex research to GLM-5", () => {
-  const routeDecision = {
-    categoryId: "research",
-    complexity: "complex",
-    adjustedComplexity: "complex",
-    modelKey: "m25",
-    modelId: internals.MODELS.m25.id,
-    label: "DEFAULT",
-    rule: "Deep text-heavy synthesis and comparative analysis",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "research", complexity: "complex" },
-    "Deep comparative analysis with citations across these long reports.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 13000 }
-  );
-  assert.equal(guarded.modelKey, "glm5");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail routes very-long multimodal complex research to Gemini 3.1 Pro", () => {
-  const routeDecision = {
-    categoryId: "research",
-    complexity: "complex",
-    adjustedComplexity: "complex",
-    modelKey: "m25",
-    modelId: internals.MODELS.m25.id,
-    label: "DEFAULT",
-    rule: "Deep text-heavy synthesis and comparative analysis",
-    injectionRisk: "HIGH",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "research", complexity: "complex" },
-    "Compare these multimodal documents and synthesize findings.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 32000, hasMultimodal: true }
-  );
-  assert.equal(guarded.modelKey, "gem31Pro");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("strict cost guardrail keeps critical non-high-stakes at M2.5 even when prompt is short", () => {
-  const routeDecision = {
-    categoryId: "communication",
-    complexity: "critical",
-    adjustedComplexity: "critical",
-    modelKey: "opus",
-    modelId: internals.MODELS.opus.id,
-    label: "ESCALATE",
-    rule: "Sensitive negotiation / legal / crisis messaging",
-    injectionRisk: "MEDIUM",
-    safetyGateTriggered: false
-  };
-  const guarded = internals.applyCostGuardrails(
-    routeDecision,
-    { categoryId: "communication", complexity: "critical" },
-    "Handle this carefully.",
-    { hasToolsDeclared: false, toolMessages: 0, approxTokens: 160 }
-  );
-  assert.equal(guarded.modelKey, "m25");
-  assert.equal(guarded.label, "BUDGET_GUARDRAIL");
-});
-
-test("non-high-stakes direct route never selects Sonnet for simple/standard/complex", () => {
-  const nonHighStakesCategories = internals.CATEGORY_POLICIES.map((policy) => policy.id).filter(
-    (categoryId) => categoryId !== "high_stakes"
-  );
-  for (const categoryId of nonHighStakesCategories) {
-    for (const complexity of ["simple", "standard", "complex"]) {
-      const route = internals.resolveCategoryRoute(categoryId, complexity);
-      assert.notEqual(route.modelKey, "sonnet", `${categoryId}/${complexity} should not route to Sonnet`);
-    }
-  }
-});
-
-test("strict cost mode suppresses moderate-score escalation for non-critical requests", () => {
-  const shouldEscalate = internals.shouldEscalateFromSelfCheck(2, {
-    categoryId: "communication",
-    adjustedComplexity: "standard"
-  });
-  assert.equal(shouldEscalate, false);
-});
-
-test("strict cost mode still allows moderate-score escalation for complex requests", () => {
-  const shouldEscalate = internals.shouldEscalateFromSelfCheck(2, {
-    categoryId: "coding",
-    adjustedComplexity: "complex"
-  });
-  assert.equal(shouldEscalate, true);
+test("self-check parser reads loose score format", () => {
+  const parsed = internals.parseSelfCheckOutput("3: uncertain answer");
+  assert.equal(parsed.score, 3);
 });

@@ -1,11 +1,12 @@
 {
   "name": "astrolabe",
-  "version": "0.2.0-beta.1",
-  "description": "Astrolabe beta: policy-driven OpenAI-compatible router for OpenClaw with safety gating and model escalation.",
+  "version": "0.3.0-beta.0",
+  "description": "Astrolabe beta: OpenClaw-first Responses router for OpenRouter with static manifests, safety policy, and cost-aware routing.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "validate:models": "node scripts/validate-model-manifest.js",
     "docs:dev": "cd docs && npx mint dev"
   },
   "engines": {

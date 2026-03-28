@@ -1,59 +1,79 @@
 ---
 title: "Connect OpenClaw"
-description: "Use Astrolabe as OpenClaw's OpenAI-compatible base URL."
+description: "Use Astrolabe as the default Responses-first provider for OpenClaw."
 ---
 
-This guide connects OpenClaw to Astrolabe without changing the OpenAI-compatible payload format your agents already use.
+Astrolabe is built to be the easiest serious AI layer for OpenClaw:
 
-## Integration idea
+- one provider URL
+- one inbound key
+- virtual models instead of vendor juggling
+- routing, fallback, cost control, and safety policy handled centrally
 
-OpenClaw keeps sending standard chat-completion requests.
+## Recommended OpenClaw setup
 
-The only change is the base URL:
+Point OpenClaw at Astrolabe as a custom provider and use the Responses API.
 
-- Before: OpenClaw talks directly to OpenRouter.
-- After: OpenClaw talks to Astrolabe, and Astrolabe talks to OpenRouter.
+### Provider values
 
-That one change adds centralized routing, safety, and cost policy to every request.
+- Base URL: `http://localhost:3000/v1`
+- API type: `openai-responses`
+- API key: same value as `ASTROLABE_API_KEY`
+- Primary model: `astrolabe/auto`
 
-## Update OpenClaw endpoint
+### Why this is the default path
 
-1. Set OpenClaw base URL to your Astrolabe host.
-2. Keep using OpenAI-compatible `chat/completions` request format.
-3. Set OpenClaw API key to the same value as `ASTROLABE_API_KEY`.
+OpenClaw keeps its normal tool execution and UX layer.
 
-### Base URL examples
+Astrolabe adds:
 
-1. Before: `https://openrouter.ai/api/v1`
-2. Local Astrolabe: `http://localhost:3000/v1`
-3. Railway Astrolabe: `https://your-app-name.up.railway.app/v1`
+- static lane manifests
+- `m27` as the main workhorse
+- specialist promotion for `kimiK25`, `kimiThinking`, and `glm5`
+- Responses-first compatibility
+- chat-completions compatibility for legacy clients
+- provider failover through OpenRouter
+- tool-policy and untrusted-content guardrails
 
-## What changes in runtime behavior
+## Suggested model choices for OpenClaw
 
-After integration, each request gets:
+Most users should expose only Astrolabe virtual models inside OpenClaw:
 
-- category/complexity classification
-- safety-gate checks for high-stakes signals
-- cost-aware model routing
-- fallback retries for model/provider availability
-- metadata headers that show route outcomes
+- `astrolabe/auto`
+- `astrolabe/coding`
+- `astrolabe/research`
+- `astrolabe/vision`
+- `astrolabe/strict-json`
+- `astrolabe/cheap`
+- `astrolabe/safe`
 
-OpenClaw still receives normal completion responses (`id`, `choices`, `usage`).
+That keeps the OpenClaw config stable even when you update the raw roster behind those lanes.
 
-## Compatibility notes
+## Typical request flow
 
-- Endpoint: `POST /v1/chat/completions`
-- Request body: OpenAI-compatible chat completion payload
-- Response body: OpenRouter passthrough shape (`id`, `choices`, `usage`, etc.)
-- Streaming: enabled by default unless `stream: false`
+1. OpenClaw sends a Responses request to Astrolabe.
+2. Astrolabe classifies category, complexity, and route modifiers.
+3. Astrolabe resolves a lane and candidate model set from its static manifest.
+4. Astrolabe executes against OpenRouter.
+5. Astrolabe verifies the result, checks tool policy, and may escalate once.
+6. OpenClaw receives the final response plus `x-astrolabe-*` routing headers.
 
-## Quick validation checklist
+## What to inspect in debugging
 
-1. Send a test request through OpenClaw.
-2. Confirm a successful response.
-3. Inspect response headers for `x-astrolabe-category`, `x-astrolabe-initial-model`, and `x-astrolabe-final-model`.
-4. Verify logs include request routing details.
+When a turn behaves unexpectedly, inspect:
 
-<Info>
-Set `ASTROLABE_API_KEY` in production. Astrolabe refuses to start in production if it is unset.
-</Info>
+- `x-astrolabe-category`
+- `x-astrolabe-lane`
+- `x-astrolabe-initial-model`
+- `x-astrolabe-final-model`
+- `x-astrolabe-route-label`
+- `x-astrolabe-escalated`
+
+For JSON responses, also inspect the inline `astrolabe` metadata block.
+
+## Notes
+
+- `POST /v1/responses` is the primary API.
+- `POST /v1/chat/completions` still works for compatibility.
+- If you are handling untrusted content with tools enabled, keep Astrolabe’s safety gate on.
+- In production, set `ASTROLABE_API_KEY`. Astrolabe refuses to start in production without it.

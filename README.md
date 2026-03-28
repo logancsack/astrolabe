@@ -1,115 +1,126 @@
-# Astrolabe 0.2.0 Beta
+# Astrolabe 0.3.0 Beta
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 ![OpenRouter](https://img.shields.io/badge/uses-OpenRouter-orange)
-![Version](https://img.shields.io/badge/version-0.2.0--beta.1-b8860b)
+![Version](https://img.shields.io/badge/version-0.3.0--beta.0-b8860b)
 
-Astrolabe is a policy-driven OpenAI-compatible routing proxy for OpenClaw.
+Astrolabe is an OpenClaw-first AI gateway for self-hosted agents.
 
-Astrolabe sits between your agent and OpenRouter, evaluates each request, applies safety checks, picks the lowest-cost model likely to succeed, and optionally escalates once when confidence is low.
+It sits between OpenClaw and OpenRouter, keeps a static checked-in roster, routes each turn onto the right lane, adds safety policy around tool use, and exposes a simple virtual model surface so users do not need to hand-tune providers or model IDs turn by turn.
 
-## What Astrolabe does
+## What changed in 0.3
 
-Astrolabe is built to solve a practical problem: model quality and model cost both matter, and the right model changes from request to request.
+- `POST /v1/responses` is now the primary API.
+- `POST /v1/chat/completions` remains as a compatibility adapter.
+- `m27` is now the default workhorse.
+- `m25` is now strict-budget, overflow, and fallback only.
+- Virtual models are first-class:
+  - `astrolabe/auto`
+  - `astrolabe/coding`
+  - `astrolabe/research`
+  - `astrolabe/vision`
+  - `astrolabe/strict-json`
+  - `astrolabe/cheap`
+  - `astrolabe/safe`
+- Static manifests replaced the old single hardcoded `MODELS` object.
 
-- For short, routine requests, Astrolabe keeps traffic on low-cost models.
-- For harder requests, it moves to stronger tiers.
-- For sensitive requests, it applies explicit safety logic and stricter routing.
-- It preserves OpenAI-compatible request/response shape, so existing clients do not need protocol changes.
+## Why Astrolabe exists
 
-## Architecture overview
+OpenClaw agents do better when the AI layer owns four things centrally:
 
-Astrolabe is intentionally small and stateless:
+- routing flexibility
+- reliability and fallback behavior
+- cost control
+- safety policy for tool use and untrusted inputs
 
-1. **Client layer**: OpenClaw (or any OpenAI-compatible client) sends `POST /v1/chat/completions`.
-2. **Policy layer**: Astrolabe classifies request category/complexity and applies safety/cost guardrails.
-3. **Execution layer**: Astrolabe sends the upstream request to OpenRouter using the selected model and fallback chain.
-4. **Verification layer**: For non-stream responses, Astrolabe can self-check quality and escalate once if needed.
-5. **Observability layer**: Astrolabe returns routing metadata headers and emits structured logs.
+Astrolabe provides those without adding a database, a hosted control plane, or any SaaS dependency.
 
-Astrolabe is headless: no database, no session store, no UI required.
+This repo is for **Astrolabe OSS** only:
 
-## End-to-end request lifecycle
+- self-hosted
+- stateless
+- user supplies `OPENROUTER_API_KEY`
+- user supplies `ASTROLABE_API_KEY`
+- OpenClaw points at the Astrolabe instance
 
-For each request:
+## Default runtime shape
 
-1. Parse request body and extract user/context features.
-2. Run high-stakes safety gate detection.
-3. Classify request into one of 12 policy categories with a complexity level.
-4. Apply routing profile + cost guardrails.
-5. Resolve initial model and candidate fallback list.
-6. Execute upstream request.
-7. If non-streaming and not forced-model mode, run self-check and optionally escalate once.
-8. Return upstream response plus `x-astrolabe-*` routing headers.
+1. OpenClaw sends `POST /v1/responses` to Astrolabe.
+2. Astrolabe classifies category, complexity, and modifiers.
+3. Astrolabe resolves a lane and candidate model set from static manifests.
+4. Astrolabe executes against OpenRouter.
+5. Astrolabe verifies non-stream responses, applies tool policy checks, and may escalate once.
+6. Astrolabe returns the upstream response plus `x-astrolabe-*` headers and inline Astrolabe metadata.
 
-If `ASTROLABE_FORCE_MODEL` is set, classifier/self-check escalation is skipped and the forced model is used as both initial and final model.
+## Static model roster
 
-## What's new in 0.2.0-beta.1
+Core production roster:
 
-1. 12-category request routing policy (`heartbeat`, `core_loop`, `retrieval`, `summarization`, `planning`, `orchestration`, `coding`, `research`, `creative`, `communication`, `high_stakes`, `reflection`)
-2. Pre-classification high-stakes safety gate
-3. Category + complexity classifier with heuristic fallback
-4. Model fallback chains when upstream model/provider is unavailable
-5. Confidence-scored self-check (1-5) with one-step escalation policy
-6. Routing metadata headers on responses
-7. `/health` endpoint for runtime mode visibility
+- `m27` -> `minimax/minimax-m2.7`
+- `m25` -> `minimax/minimax-m2.5`
+- `kimiK25` -> `moonshotai/kimi-k2.5`
+- `kimiThinking` -> `moonshotai/kimi-k2-thinking`
+- `glm5` -> `z-ai/glm-5`
+- `grok` -> `x-ai/grok-4.1-fast`
+- `dsCoder` -> `deepseek/deepseek-v3.2`
+- `gpt54` -> `openai/gpt-5.4`
+- `gpt54Mini` -> `openai/gpt-5.4-mini`
+- `gpt54Nano` -> `openai/gpt-5.4-nano`
+- `gem31FlashLite` -> `google/gemini-3.1-flash-lite-preview`
+- `gem31Pro` -> `google/gemini-3.1-pro-preview`
+- `sonnet` -> `anthropic/claude-sonnet-4.6`
+- `opus` -> `anthropic/claude-opus-4.6`
 
-## Default model roster
+Compatibility aliases:
 
-```js
-const MODELS = {
-  opus: "anthropic/claude-opus-4.6",
-  sonnet: "anthropic/claude-sonnet-4.6",
-  m25: "minimax/minimax-m2.5",
-  kimiK25: "moonshotai/kimi-k2.5",
-  glm5: "z-ai/glm-5",
-  grok: "x-ai/grok-4.1-fast",
-  nano: "openai/gpt-5-nano",
-  dsCoder: "deepseek/deepseek-v3.2",
-  gemFlash: "google/gemini-3-flash-preview",
-  gem31Pro: "google/gemini-3.1-pro-preview"
-};
-```
+- `nano` -> `gpt54Nano`
+- `mini` -> `gpt54Mini`
+- `gemFlash` -> `gem31FlashLite`
 
-Tier intent:
+## Routing defaults
 
-- `ULTRA-CHEAP`: highest throughput and lowest unit cost
-- `BUDGET`: `grok` for conversational and light tool-use paths
-- `VALUE`: `m25` as the primary reasoning/workhorse route for most standard and complex text tasks
-- `VALUE` specialists: `kimiK25` for multimodal-first routes and `glm5` for large-context engineering/text-heavy analysis
-- `MID-TIER`: `gem31Pro` (and `gemFlash` as a conditional fallback/specialist path, not cheap-first routing)
-- `STANDARD`: `sonnet` is escalation-focused (plus optional high-stakes budget-floor mode)
-- `PREMIUM`: high-stakes/safety-critical floor or peak escalation
+- `astrolabe/auto`: category-driven with `m27` as the main non-trivial default
+- `astrolabe/coding`: `m27 -> glm5 -> sonnet -> opus`
+- `astrolabe/research`: `kimiThinking -> m27 -> gem31Pro -> sonnet -> opus`
+- `astrolabe/vision`: `kimiK25 -> gem31FlashLite -> gem31Pro -> sonnet`
+- `astrolabe/strict-json`: `glm5 -> m27 -> gpt54Mini -> sonnet`
+- `astrolabe/cheap`: `grok -> m25 -> dsCoder -> gpt54Nano`
+- `astrolabe/safe`: `sonnet -> opus`
 
-Multimodal caveat:
+Policy rules worth knowing:
 
-- `m25` is treated as text-first in current OpenRouter routing, so multimodal requests are routed to `kimiK25` or `gem31Pro` by policy.
+- `m27` is the workhorse for serious OpenClaw turns.
+- `m25` is only used for strict-budget, fallback, or overflow scenarios.
+- Multimodal turns promote to the vision lane.
+- Strict JSON and tool-heavy turns promote to `glm5`.
+- Tool-enabled requests with untrusted content cannot stay on weak cheap tiers.
 
-## Self-check and escalation policy
+## API surface
 
-1. Score >= 4: keep current model response
-2. Score 2-3:
-   - `strict` cost mode: escalate only for complex/critical/high-stakes routes
-   - simple/standard routes return with low-confidence signal
-3. Score 1:
-   - `strict` cost mode: non-critical routes escalate one tier up
-   - critical/high-stakes routes escalate to Opus
-4. Maximum one escalation per request
-5. If final score remains low, response is returned with `x-astrolabe-low-confidence: true`
+Public endpoints:
+
+- `GET /health`
+- `GET /v1/models`
+- `GET /v1/lanes`
+- `POST /v1/responses`
+- `POST /v1/chat/completions`
+
+`GET /v1/models` returns virtual models by default.
+
+Use `GET /v1/models?view=raw` to inspect the underlying static roster.
 
 ## Quick start
 
-### 1) Install dependencies
+### 1. Install
 
 ```bash
-cd Astrolabe
 npm install
 ```
 
-### 2) Configure environment
+### 2. Configure
 
-Copy `.env.example` to `.env` and set at least:
+Copy `.env.example` to `.env` and set:
 
 ```env
 OPENROUTER_API_KEY=your_real_key_here
@@ -117,133 +128,77 @@ ASTROLABE_API_KEY=your_proxy_secret
 PORT=3000
 ```
 
-`ASTROLABE_API_KEY` should be a long random shared secret you control.  
-Use the same value in your client `Authorization: Bearer ...` header (or `x-api-key`).
-
-Generate one:
+Generate an inbound key:
 
 ```bash
-# cross-platform (Node)
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-
-# OpenSSL (macOS/Linux)
-openssl rand -hex 32
 ```
 
-### 3) Start server
+### 3. Start
 
 ```bash
 npm start
 ```
 
-Server starts at `http://localhost:3000`.
-
-### 4) Smoke test
+### 4. Health check
 
 ```bash
-curl -X POST http://localhost:3000/v1/chat/completions ^
-  -H "Content-Type: application/json" ^
-  -H "Authorization: Bearer your_proxy_secret" ^
-  -d "{\"model\":\"ignored-by-astrolabe\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one line.\"}]}"
+curl http://localhost:3000/health \
+  -H "Authorization: Bearer your_proxy_secret"
 ```
 
-`model` in the request is accepted for compatibility, but Astrolabe overrides it with routed policy selection unless `ASTROLABE_FORCE_MODEL` is set.
+### 5. Test the primary Responses API
 
-## Optional routing configuration
-
-`strict` is used in two different settings with different behavior:
-
-- `ASTROLABE_COST_EFFICIENCY_MODE=strict` controls budget aggressiveness for routing/escalation
-- `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict` controls high-stakes confirmation blocking
-
-```env
-# balanced | budget | quality
-ASTROLABE_ROUTING_PROFILE=budget
-
-# strict | balanced | off
-ASTROLABE_COST_EFFICIENCY_MODE=strict
-
-# if false, non-high-stakes direct Sonnet/Opus routes are guarded down to cheaper models
-ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS=false
-
-# true | false
-ASTROLABE_ENABLE_SAFETY_GATE=true
-
-# prompt | strict | off
-ASTROLABE_HIGH_STAKES_CONFIRM_MODE=prompt
-ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN=confirm
-
-# allow Sonnet floor for high-stakes when routing profile is budget
-ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR=false
-
-# override classifier/self-check models
-ASTROLABE_CLASSIFIER_MODEL_KEY=nano
-ASTROLABE_SELF_CHECK_MODEL_KEY=nano
-
-# classifier context window
-ASTROLABE_CONTEXT_MESSAGES=8
-ASTROLABE_CONTEXT_CHARS=2500
-
-# optional in-memory request rate limiting
-ASTROLABE_RATE_LIMIT_ENABLED=false
-ASTROLABE_RATE_LIMIT_WINDOW_MS=60000
-ASTROLABE_RATE_LIMIT_MAX_REQUESTS=120
-
-# hard override all routing (full model id)
-# bypasses classifier/self-check escalation and locks initial/final upstream model id
-ASTROLABE_FORCE_MODEL=
+```bash
+curl -X POST http://localhost:3000/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your_proxy_secret" \
+  -d '{"model":"astrolabe/auto","input":"Write a one-line greeting.","stream":false}'
 ```
 
-### Mode reference
+### 6. OpenClaw setup
 
-| Setting | Values | Default | Controls |
-| --- | --- | --- | --- |
-| `ASTROLABE_ROUTING_PROFILE` | `budget`, `balanced`, `quality` | `budget` | Base policy aggressiveness |
-| `ASTROLABE_COST_EFFICIENCY_MODE` | `strict`, `balanced`, `off` | `strict` | Cost guardrail strictness |
-| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | `prompt`, `strict`, `off` | `prompt` | High-stakes confirmation behavior |
+Point OpenClaw at Astrolabe as a custom provider:
 
-Invalid mode values are normalized to safe defaults (`budget`, `strict`, `prompt`).
+- base URL: `http://localhost:3000/v1`
+- API type: `openai-responses`
+- model: `astrolabe/auto`
+- API key: same value as `ASTROLABE_API_KEY`
 
-### Complete environment variable reference
+## Environment variables
 
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `OPENROUTER_API_KEY` | Yes | none | Required OpenRouter upstream key |
-| `ASTROLABE_API_KEY` | Yes in production (recommended locally) | empty | Inbound API auth for Astrolabe (use a long random shared secret) |
-| `PORT` | No | `3000` | HTTP listen port |
-| `OPENROUTER_SITE_URL` | No | empty | Optional `HTTP-Referer` header for OpenRouter |
-| `OPENROUTER_APP_NAME` | No | empty | Optional `X-Title` header for OpenRouter |
-| `ASTROLABE_ROUTING_PROFILE` | No | `budget` | Policy profile selection |
-| `ASTROLABE_COST_EFFICIENCY_MODE` | No | `strict` | Cost guardrail mode |
-| `ASTROLABE_ALLOW_DIRECT_PREMIUM_MODELS` | No | `false` | Allow/block direct Sonnet/Opus on non-high-stakes routes |
-| `ASTROLABE_ENABLE_SAFETY_GATE` | No | `true` | Enable high-stakes detection |
-| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | No | `prompt` | High-stakes confirmation policy |
-| `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | No | `confirm` | Confirmation token used in strict high-stakes mode |
-| `ASTROLABE_ALLOW_HIGH_STAKES_BUDGET_FLOOR` | No | `false` | Allow Sonnet floor for high-stakes in budget routing |
-| `ASTROLABE_CLASSIFIER_MODEL_KEY` | No | `nano` | Primary classifier model key (`nano`, `grok`, `m25`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5`) |
-| `ASTROLABE_SELF_CHECK_MODEL_KEY` | No | `nano` | Primary self-check model key (`nano`, `grok`, `m25`, `sonnet`, `opus`, `dsCoder`, `gemFlash`, `gem31Pro`, `kimiK25`, `glm5`) |
-| `ASTROLABE_CONTEXT_MESSAGES` | No | `8` | Classifier context message bound (`3-20`) |
-| `ASTROLABE_CONTEXT_CHARS` | No | `2500` | Classifier context char bound (`600-12000`) |
-| `ASTROLABE_RATE_LIMIT_ENABLED` | No | `false` | Enable in-memory request rate limiting on `POST /v1/chat/completions` |
-| `ASTROLABE_RATE_LIMIT_WINDOW_MS` | No | `60000` | Rate limit window size in milliseconds (`1000-3600000`) |
-| `ASTROLABE_RATE_LIMIT_MAX_REQUESTS` | No | `120` | Max requests allowed per key per window (`1-100000`) |
-| `ASTROLABE_FORCE_MODEL` | No | empty | Hard override to one model id (no classifier/self-check escalation) |
+Core:
 
-See [docs/configuration.mdx](docs/configuration.mdx) for full behavior details and preset profiles.
+- `OPENROUTER_API_KEY`
+- `ASTROLABE_API_KEY`
+- `PORT`
 
-## Safety gate behavior
+Primary runtime controls:
 
-- `prompt` mode: high-stakes requests are force-routed and a safety system policy prompt is injected
-- `strict` mode: high-stakes requests require exact confirmation token match (`x-astrolabe-confirmed: <token>` or `metadata.astrolabe_confirmed: "<token>"`)
-- `off` mode: no special confirmation handling
+- `ASTROLABE_RESPONSES_ENABLED`
+- `ASTROLABE_CHAT_COMPLETIONS_ENABLED`
+- `ASTROLABE_ROUTING_PROFILE`
+- `ASTROLABE_COST_EFFICIENCY_MODE`
+- `ASTROLABE_DEFAULT_PROFILE`
+- `ASTROLABE_ENABLE_SAFETY_GATE`
+- `ASTROLABE_HIGH_STAKES_CONFIRM_MODE`
+- `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN`
+- `ASTROLABE_RESPONSES_FILES_URL_ALLOWLIST`
+- `ASTROLABE_RESPONSES_IMAGES_URL_ALLOWLIST`
+- `ASTROLABE_RESPONSES_MAX_URL_PARTS`
+- `ASTROLABE_RATE_LIMIT_ENABLED`
+- `ASTROLABE_RATE_LIMIT_WINDOW_MS`
+- `ASTROLABE_RATE_LIMIT_MAX_REQUESTS`
+- `ASTROLABE_FORCE_MODEL`
 
-## Response headers
+## Response transparency
 
-Astrolabe adds:
+Astrolabe adds routing headers:
 
 - `x-astrolabe-category`
 - `x-astrolabe-complexity`
 - `x-astrolabe-adjusted-complexity`
+- `x-astrolabe-lane`
 - `x-astrolabe-initial-model`
 - `x-astrolabe-final-model`
 - `x-astrolabe-route-label`
@@ -252,31 +207,18 @@ Astrolabe adds:
 - `x-astrolabe-low-confidence`
 - `x-astrolabe-safety-gate`
 
-## OpenClaw integration
+Non-stream JSON responses also include inline Astrolabe metadata.
 
-Point OpenClaw OpenAI-compatible base URL at Astrolabe:
+## Validation
 
-1. Before: `https://openrouter.ai/api/v1`
-2. After (local): `http://localhost:3000/v1`
-3. After (deploy): `https://your-host/v1`
-
-Set OpenClaw API key to the same value as `ASTROLABE_API_KEY`.
-
-## Test
+Run tests:
 
 ```bash
 npm test
 ```
 
-## Troubleshooting
+Validate the static manifest against OpenRouter’s current catalog:
 
-1. `Missing OPENROUTER_API_KEY`
-   - Set key in `.env` and restart
-2. `high_stakes_confirmation_required`
-   - If `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`, include the exact configured token in header/body
-3. Frequent escalations
-   - Increase routing profile quality or tighten category prompts
-4. `rate_limit_exceeded`
-   - Increase `ASTROLABE_RATE_LIMIT_MAX_REQUESTS`, enlarge `ASTROLABE_RATE_LIMIT_WINDOW_MS`, or disable limiter (`ASTROLABE_RATE_LIMIT_ENABLED=false`)
-5. `est_usd=n/a`
-   - Upstream omitted token usage
+```bash
+npm run validate:models
+```

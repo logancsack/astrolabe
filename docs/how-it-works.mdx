@@ -1,117 +1,59 @@
 ---
 title: "How Astrolabe Works"
-description: "Architecture, routing decisions, safety controls, and request lifecycle."
+description: "Responses-first architecture, lane routing, safety checks, and fallback behavior."
 ---
 
-Astrolabe is a decision layer between your client and upstream models.
+Astrolabe is the decision layer between OpenClaw and OpenRouter.
 
-When a request arrives, Astrolabe does not just forward it. It evaluates risk, complexity, and expected effort, then routes to a model tier that balances correctness and cost.
-
-This page is an architecture overview. For the decision-complete routing tree and threshold rules, use [Routing Reference](/routing-reference). For full model economics and benchmark confidence labeling, use [Model Roster Reference](/model-roster).
-
-## System map
-
-Astrolabe has four runtime responsibilities:
-
-1. **Understand intent**: classify what the request is trying to do.
-2. **Apply guardrails**: enforce safety and cost policies.
-3. **Execute reliably**: call the selected model with fallbacks.
-4. **Return traceability**: include metadata headers and logs showing what happened.
-
-Conceptual flow:
-
-`OpenClaw -> Astrolabe policy engine -> OpenRouter -> selected model -> Astrolabe metadata -> OpenClaw`
+It does not just forward requests. It classifies the work, chooses a lane, picks the cheapest acceptable candidate set, enforces safety rules, and only then executes upstream.
 
 ## Request lifecycle
 
-For every `POST /v1/chat/completions` request:
+For each request:
 
-1. Parse request body, recent context, and conversation features.
-2. Apply inbound auth and optional request rate limit gate.
-3. Run high-stakes signal detection.
-4. Classify category and complexity.
-5. Apply routing profile (`budget`/`balanced`/`quality`).
-6. Apply cost-efficiency guardrails (`strict`/`balanced`/`off`).
-7. Resolve initial model and fallback candidates.
-8. Execute upstream call.
-9. For non-streaming responses, run self-check and optionally escalate once.
-10. Return response with routing metadata headers.
+1. normalize the request into a shared internal format
+2. extract conversation and tool features
+3. detect high-stakes signals
+4. classify category and complexity
+5. derive route modifiers such as `multimodal`, `tool_heavy`, or `strict_json`
+6. choose a lane
+7. select candidates from the static manifest
+8. execute against OpenRouter
+9. verify non-stream results and optionally escalate once
+10. inspect outbound tool calls before returning them
 
-Forced-model mode (`ASTROLABE_FORCE_MODEL`) is a special case: classification and self-check escalation are skipped, and the forced model stays locked as both initial and final model.
+## Primary interface
 
-## Category and complexity
+Astrolabe is now Responses-first:
 
-Astrolabe routes using two dimensions:
+- `POST /v1/responses` is the primary endpoint
+- `POST /v1/chat/completions` is a compatibility adapter
 
-- **Category**: what type of work is requested (coding, retrieval, planning, high-stakes, etc.)
-- **Complexity**: how hard/risky the request is (`simple`, `standard`, `complex`, `critical`)
+Both endpoints run through the same routing engine.
 
-This combination determines initial route labels like `DEFAULT`, `VALUE`, `STANDARD`, or `ESCALATE`.
+## Workhorse and specialists
 
-For the exact 12x4 base route matrix (before guardrails), see [Routing Reference](/routing-reference#base-route-matrix-before-cost-guardrails).
+- `m27` is the default workhorse
+- `m25` is strict-budget and fallback only
+- `kimiK25` handles multimodal work
+- `kimiThinking` handles deeper research/planning
+- `glm5` handles strict JSON and tool/schema-sensitive requests
+- `sonnet` and `opus` own the safe lane
 
-## Model tiers
+## Safety model
 
-Astrolabe's model roster is organized by tier intent:
+Astrolabe adds policy on top of raw model execution:
 
-- `ULTRA-CHEAP`: minimal-cost, high-volume trivial requests
-- `BUDGET`: `grok` for conversational and light tool-use work
-- `VALUE`: `m25` as the default workhorse for most standard/complex text reasoning
-- `VALUE` specialists: `kimiK25` for multimodal-first routes, `glm5` for large-context engineering/text-heavy analysis
-- `MID-TIER`: `gem31Pro` for long-context multimodal escalation paths, with `gemFlash` reserved as a conditional fallback/specialist path
-- `STANDARD`: `sonnet` is escalation-focused (plus optional high-stakes budget-floor behavior)
-- `PREMIUM`: maximum caution and high-stakes floor
+- high-stakes confirmation mode
+- untrusted-content safety floors
+- tool-call approval or blocking
+- URL allowlists for Responses file/image inputs
 
-In day-to-day traffic, most non-multimodal requests should remain in ULTRA-CHEAP, BUDGET, or VALUE tiers with `m25` carrying most standard/complex load.
+## Transparency
 
-Current multimodal caveat: `m25` is treated as text-first in OpenRouter routing, so multimodal policy routes prefer `kimiK25` or `gem31Pro`.
+Astrolabe exposes its behavior through:
 
-For per-model costs, context windows, modalities, benchmark rows, and confidence levels, see [Model Roster Reference](/model-roster).
-
-## Safety behavior
-
-High-stakes detection evaluates:
-
-- action-like language (payments, transfers, deletion, credential resets)
-- sensitive data signals (PII, legal/health-sensitive operations)
-
-Modes:
-
-- `prompt`: inject policy guidance and continue
-- `strict`: require explicit confirmation token before execution
-- `off`: no high-stakes confirmation handling
-
-## Cost behavior
-
-Cost controls are layered:
-
-1. **Routing profile** adjusts baseline complexity interpretation.
-2. **Cost efficiency mode** applies guardrails to avoid unnecessary premium routing.
-3. **Direct premium toggle** can block non-high-stakes direct Sonnet/Opus starts.
-
-In strict mode, low-risk traffic is intentionally pushed toward low-cost tiers first, then escalates only when confidence or risk justifies it.
-
-## Reliability and fallback
-
-Astrolabe uses candidate chains for each route.
-
-If the first upstream model is unavailable, retryable failures move to the next candidate in the chain. This keeps requests resilient without exposing provider-level complexity to clients.
-
-For exact fallback maps and multimodal fallback subset behavior, see [Routing Reference](/routing-reference#fallback-chains).
-
-## What clients can observe
-
-Astrolabe adds `x-astrolabe-*` response headers including:
-
-- category and complexity
-- initial and final model IDs
-- route label
-- escalation flag
-- confidence score and low-confidence flag
-
-This metadata enables monitoring, audits, and policy tuning without changing client request format.
-
-## Deep references
-
-- [Routing Reference](/routing-reference): full routing pipeline, strict guardrail thresholds, escalation logic, fallback maps, and config-to-logic table.
-- [Model Roster Reference](/model-roster): model matrix with runtime costs/capabilities and benchmark confidence labels.
+- `GET /v1/models`
+- `GET /v1/lanes`
+- `x-astrolabe-*` headers
+- inline Astrolabe metadata on JSON responses

@@ -1,92 +1,65 @@
 ---
 title: "Astrolabe Docs"
-description: "OpenAI-compatible routing for OpenClaw with policy, safety, and cost controls."
+description: "OpenClaw-first Responses routing for self-hosted agents on OpenRouter."
 ---
 
-Astrolabe is a headless OpenAI-compatible proxy that sits between OpenClaw and OpenRouter.
+Astrolabe is a self-hosted AI gateway for OpenClaw.
 
-It receives each request, decides how risky and complex it is, routes to an appropriate model tier, and returns the same API shape clients already expect.
+It keeps routing, fallback behavior, model cost controls, and safety policy in one place while staying simple to deploy:
 
-## Why teams use Astrolabe
+- no database
+- no hosted control plane
+- no runtime model discovery
+- one OpenRouter key
+- one Astrolabe API key
 
-Astrolabe is designed for environments where all three constraints matter at once:
+## Core ideas
 
-- response quality must stay high
-- model spend must stay predictable
-- safety-sensitive actions need stronger controls
+1. `POST /v1/responses` is the primary interface.
+2. `POST /v1/chat/completions` remains as a compatibility layer.
+3. Virtual models are the user-facing surface.
+4. Static manifests control the raw roster and lane candidates.
+5. `m27` is the main workhorse.
+6. `m25` is strict-budget and fallback only.
 
-Instead of choosing one global model for everything, Astrolabe chooses per request.
+## What Astrolabe owns
 
-## At-a-glance architecture
+- request classification
+- lane routing
+- specialist promotion
+- retry and fallback behavior
+- non-stream verification
+- tool-policy checks
+- untrusted-content safety floors
+- route transparency through headers and metadata
 
-1. OpenClaw sends `POST /v1/chat/completions`.
-2. Astrolabe classifies category/complexity and applies safety + cost policy.
-3. Astrolabe selects a model and fallback chain.
-4. OpenRouter executes on the selected provider/model.
-5. Astrolabe returns response + routing metadata headers.
+## Default virtual models
 
-For full request flow details, see [How Astrolabe Works](/how-it-works).
-For implementation-level policy detail, see [Routing Reference](/routing-reference) and [Model Roster Reference](/model-roster).
-
-<Card
-  title="How Astrolabe Works"
-  icon="terminal"
-  href="/how-it-works"
-  horizontal
->
-  Detailed architecture, lifecycle, and routing behavior.
-</Card>
-
-## Core capabilities
-
-1. Category-aware routing across 12 operational categories.
-2. Safety-gate checks for high-stakes requests.
-3. Cost-efficiency guardrails to reduce unnecessary premium model usage.
-4. One-step self-check escalation for low-confidence non-stream responses.
-5. Model fallback chains for provider/model availability issues.
-6. Traceability through `x-astrolabe-*` headers and structured logs.
+- `astrolabe/auto`
+- `astrolabe/coding`
+- `astrolabe/research`
+- `astrolabe/vision`
+- `astrolabe/strict-json`
+- `astrolabe/cheap`
+- `astrolabe/safe`
 
 <Columns cols={2}>
-  <Card
-    title="Quickstart"
-    icon="rocket"
-    href="/quickstart"
-  >
-    Install and run Astrolabe locally in minutes.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run Astrolabe locally and verify Responses-first routing.
   </Card>
-  <Card
-    title="Configuration"
-    icon="sliders"
-    href="/configuration"
-  >
-    Tune routing, safety, and cost controls.
+  <Card title="Connect OpenClaw" icon="plug" href="/openclaw">
+    Point OpenClaw at Astrolabe as its default provider.
   </Card>
-  <Card
-    title="Model Roster"
-    icon="table"
-    href="/model-roster"
-  >
-    Full model matrix with cost, context, modality, and benchmark confidence.
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Tune profiles, safety controls, and Responses URL policy.
   </Card>
-  <Card
-    title="Routing Reference"
-    icon="git-branch"
-    href="/routing-reference"
-  >
-    Complete routing tree, guardrail thresholds, fallback chains, and escalation rules.
+  <Card title="Routing Reference" icon="git-branch" href="/routing-reference">
+    See the current lane logic, workhorse model, and guardrails.
   </Card>
-  <Card
-    title="Connect OpenClaw"
-    icon="plug"
-    href="/openclaw"
-  >
-    Point OpenClaw at Astrolabe with no protocol changes.
+  <Card title="Model Roster" icon="table" href="/model-roster">
+    Review the static roster and alias map.
   </Card>
-  <Card
-    title="API Reference"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Endpoint contracts and metadata semantics.
+  <Card title="API Reference" icon="terminal" href="/api-reference/introduction">
+    Check endpoint contracts for `/v1/responses`, `/v1/chat/completions`, and metadata endpoints.
   </Card>
 </Columns>

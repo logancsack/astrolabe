@@ -3,57 +3,17 @@ title: "Chat Completions"
 openapi: "POST /v1/chat/completions"
 ---
 
-OpenAI-compatible chat completion endpoint routed by Astrolabe.
+`POST /v1/chat/completions` is the compatibility endpoint.
 
-## What this endpoint does
+Use it when you have an OpenAI chat-completions client that you do not want to change yet.
 
-`POST /v1/chat/completions` keeps your existing request shape, but adds policy behavior before upstream execution:
+## Important behavior
 
-1. request classification (category + complexity)
-2. high-stakes safety logic
-3. cost-aware routing and fallback handling
-4. optional non-stream self-check with one-step escalation
+- Astrolabe still routes through the same engine used by `/v1/responses`.
+- Virtual models like `astrolabe/auto` are supported.
+- Non-stream JSON responses include inline Astrolabe metadata.
+- Streaming responses are passed through as SSE.
 
-## Response contract
+## Prefer `/v1/responses` for new OpenClaw setups
 
-The JSON/SSE body remains OpenAI-compatible.
-
-Astrolabe adds `x-astrolabe-*` metadata headers so you can inspect route decisions without parsing server logs.
-
-Key headers:
-
-- `x-astrolabe-category`: policy category chosen
-- `x-astrolabe-complexity`: classifier complexity
-- `x-astrolabe-adjusted-complexity`: complexity after routing-profile adjustment
-- `x-astrolabe-initial-model`: first successfully used upstream model
-- `x-astrolabe-final-model`: final model after optional escalation
-- `x-astrolabe-route-label`: policy label (`DEFAULT`, `VALUE`, `STANDARD`, `ESCALATE`, `BUDGET_GUARDRAIL`, `FORCED`, etc.)
-- `x-astrolabe-escalated`: whether non-stream response escalated
-
-When rate limiting is enabled (`ASTROLABE_RATE_LIMIT_ENABLED=true`), responses also include:
-
-- `x-ratelimit-limit`
-- `x-ratelimit-remaining`
-- `x-ratelimit-reset` (unix timestamp seconds)
-
-## Forced-model behavior
-
-If `ASTROLABE_FORCE_MODEL` is set:
-
-- classifier routing is bypassed
-- self-check escalation is skipped
-- initial and final model remain the forced model ID
-
-## Common error responses
-
-- `400 invalid_request_error`: malformed JSON (`invalid_json`) or missing/invalid `messages`.
-- `401 authentication_error`: missing or invalid Astrolabe API key.
-- `409 safety_confirmation_required`: high-stakes request blocked pending explicit confirmation token.
-- `413 invalid_request_error`: payload too large (`payload_too_large`).
-- `429 rate_limit_error`: request budget exceeded when `ASTROLABE_RATE_LIMIT_ENABLED=true` (`rate_limit_exceeded`, includes `retry-after`).
-
-## Use this endpoint when
-
-- you want OpenAI-compatible client behavior with centralized cost/safety routing
-- you need route transparency through metadata headers
-- you want fallback and escalation logic outside client code
+OpenClaw integrations should prefer `api: openai-responses` and `POST /v1/responses`.

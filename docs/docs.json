@@ -63,6 +63,7 @@
             "group": "Endpoints",
             "pages": [
               "api-reference/introduction",
+              "api-reference/endpoint/responses",
               "api-reference/endpoint/chat-completions"
             ]
           }

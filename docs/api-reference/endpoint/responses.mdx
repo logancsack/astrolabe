@@ -1,0 +1,25 @@
+---
+title: "Responses"
+openapi: "POST /v1/responses"
+---
+
+`POST /v1/responses` is the primary Astrolabe API.
+
+This is the recommended endpoint for OpenClaw.
+
+## What Astrolabe adds
+
+- virtual model routing
+- lane selection
+- fallback and retry handling
+- verifier-driven escalation for non-stream requests
+- tool-policy checks
+- untrusted-content safety floors
+
+## Recommended request shape
+
+- `model: "astrolabe/auto"`
+- `input: "..."`
+- `stream: false` unless you need SSE
+
+You can also use specialist virtual models like `astrolabe/coding` or `astrolabe/strict-json`.
