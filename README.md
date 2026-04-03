@@ -9,6 +9,25 @@ Astrolabe is an OpenClaw-first AI gateway for self-hosted agents.
 
 It sits between OpenClaw and OpenRouter, keeps a static checked-in roster, routes each turn onto the right lane, adds safety policy around tool use, and exposes a simple virtual model surface so users do not need to hand-tune providers or model IDs turn by turn.
 
+## Maintainer workflow
+
+Astrolabe now uses a production-style GitHub workflow:
+
+- `main` is protected
+- every change should happen on a branch
+- every branch should go through a pull request
+- required checks must pass before merge:
+  - `test`
+  - `validate-model-manifest`
+- merges should use **Squash and merge**
+
+If you are using an AI coding agent:
+
+- repo-wide agent instructions live in [AGENTS.md](./AGENTS.md)
+- Claude Code instructions live in [CLAUDE.md](./CLAUDE.md)
+
+That is now the expected workflow for all future changes.
+
 ## What changed in 0.3
 
 - `POST /v1/responses` is now the primary API.
