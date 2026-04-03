@@ -76,9 +76,11 @@ Core production roster:
 - `gem31FlashLite` -> `google/gemini-3.1-flash-lite-preview`
 - `gem25Pro` -> `google/gemini-2.5-pro`
 - `gem31Pro` -> `google/gemini-3.1-pro-preview`
-- `grok420Beta` -> `x-ai/grok-4.20-beta`
+- `grok420` -> `x-ai/grok-4.20`
 - `sonnet` -> `anthropic/claude-sonnet-4.6`
 - `opus` -> `anthropic/claude-opus-4.6`
+- `mimoV2Flash` -> `xiaomi/mimo-v2-flash` (raw eval model)
+- `mistralSmall4` -> `mistralai/mistral-small-2603` (raw eval model)
 
 Compatibility aliases:
 
@@ -90,21 +92,24 @@ Compatibility aliases:
 
 - `astrolabe/auto`: category-driven with `m27` as the main non-trivial default
 - `astrolabe/coding`: `m27 -> qwenCoderNext -> glm5 -> sonnet -> opus`
-- `astrolabe/research`: `qwen35Plus -> kimiThinking -> m27 -> grok420Beta -> sonnet -> opus`
-- `astrolabe/vision`: `kimiK25 -> qwen35Plus -> gem25Pro -> gem31Pro -> sonnet`
+- `astrolabe/research`: `qwen35Plus -> kimiThinking -> m27 -> sonnet -> opus`
+- `astrolabe/vision`: `kimiK25 -> qwen35Plus -> gem25Pro -> sonnet`
 - `astrolabe/strict-json`: `m27 -> glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet`
 - `astrolabe/cheap`: `qwen35Flash -> grok -> m25 -> dsCoder -> gpt5Nano`
-- `astrolabe/safe`: `sonnet -> opus -> gpt54`
+- `astrolabe/safe`: `sonnet -> opus`
 
 Policy rules worth knowing:
 
 - `m27` is the workhorse for serious OpenClaw turns.
 - `m25` is only used for strict-budget, fallback, or overflow scenarios.
+- Preview and experimental models are opt-in. They only join routing when both `ASTROLABE_ALLOW_PREVIEW_MODELS=true` and `metadata.astrolabe.allow_preview=true`.
 - Multimodal turns promote to the vision lane.
 - Tool availability alone does not imply `strict-json`.
 - Explicit structured output and schema-sensitive work still use the `strict-json` lane, but `m27` gets the first attempt.
 - `glm47Flash`, `glm5`, and `gpt54Mini` are validation-recovery specialists, not first-pass defaults.
 - Tool-enabled requests with untrusted content cannot stay on weak cheap tiers.
+- Dangerous remote-write, external-comms, credential, and destructive tool calls are capability-gated before Astrolabe returns them.
+- Active OpenClaw sessions can reuse the last successful in-lane model when sticky execution metadata is present.
 
 ## API surface
 
@@ -190,6 +195,10 @@ Primary runtime controls:
 - `ASTROLABE_ROUTING_PROFILE`
 - `ASTROLABE_COST_EFFICIENCY_MODE`
 - `ASTROLABE_DEFAULT_PROFILE`
+- `ASTROLABE_ALLOW_PREVIEW_MODELS`
+- `ASTROLABE_STICKY_EXECUTOR_ENABLED`
+- `ASTROLABE_SKIP_LOW_RISK_VERIFIER`
+- `ASTROLABE_SKIP_LOW_RISK_CLASSIFIER`
 - `ASTROLABE_ENABLE_SAFETY_GATE`
 - `ASTROLABE_HIGH_STAKES_CONFIRM_MODE`
 - `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN`
@@ -213,6 +222,10 @@ Astrolabe adds routing headers:
 - `x-astrolabe-final-model`
 - `x-astrolabe-route-label`
 - `x-astrolabe-escalated`
+- `x-astrolabe-sticky-applied`
+- `x-astrolabe-sticky-reason`
+- `x-astrolabe-verification-skipped`
+- `x-astrolabe-transport-fallback-only`
 - `x-astrolabe-confidence-score`
 - `x-astrolabe-low-confidence`
 - `x-astrolabe-safety-gate`

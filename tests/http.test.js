@@ -167,7 +167,9 @@ test("GET /v1/models?view=raw returns the static checked-in roster", async () =>
     assert.equal(response.status, 200);
     assert.ok(response.body.data.some((model) => model.id === "minimax/minimax-m2.7"));
     assert.ok(response.body.data.some((model) => model.id === "openai/gpt-5-nano"));
-    assert.ok(Array.isArray(response.body.buckets.active_defaults));
+    assert.ok(Array.isArray(response.body.buckets.defaults));
+    assert.ok(Array.isArray(response.body.buckets.raw_only));
+    assert.ok(Array.isArray(response.body.buckets.experimental));
   } finally {
     server.close();
   }

@@ -50,6 +50,20 @@ const TOOL_BLOCK_REGEX = /\b(shell|exec|system|browser|web_fetch|web-search|http
 const URL_SCHEME_REGEX = /^https?:\/\//i;
 const LOW_RISK_CATEGORIES = new Set(["heartbeat", "retrieval", "summarization", "creative", "communication"]);
 const M27_WORKHORSE_CATEGORIES = new Set(["core_loop", "planning", "orchestration", "coding", "research", "reflection"]);
+const STICKY_BREAK_LANES = new Set(["safe", "vision", "strict-json"]);
+const SAFE_TOOL_CAPABILITIES = new Set(["read_local", "read_remote"]);
+const APPROVAL_TOOL_CAPABILITIES = new Set([
+  "external_comms",
+  "credential_access",
+  "remote_write",
+  "financial_or_destructive"
+]);
+const BLOCKED_UNTRUSTED_CAPABILITIES = new Set([
+  "external_comms",
+  "credential_access",
+  "remote_write",
+  "financial_or_destructive"
+]);
 
 function safeText(value) {
   if (typeof value === "string") return value;
@@ -226,6 +240,62 @@ function extractToolNames(tools) {
       return tool.name || tool.type || null;
     })
   );
+}
+
+function normalizeToolCapability(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized.replace(/[ -]/g, "_");
+}
+
+function normalizeToolCapabilitiesMap(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw).map(([toolName, capabilities]) => [
+      String(toolName || "").trim(),
+      dedupe(
+        (Array.isArray(capabilities) ? capabilities : [])
+          .map((capability) => normalizeToolCapability(capability))
+          .filter(Boolean)
+      )
+    ])
+  );
+}
+
+function inferCapabilitiesFromToolName(toolName, args = "") {
+  const combined = `${toolName} ${args}`.toLowerCase();
+  const capabilities = new Set();
+  if (/\b(shell|exec|terminal|powershell|bash|python|node|run command|command)\b/i.test(combined)) {
+    capabilities.add("code_exec");
+  }
+  if (/\b(email|gmail|outlook|slack|discord|teams|telegram|message|sms|twilio|sendgrid|resend|postmark)\b/i.test(combined)) {
+    capabilities.add("external_comms");
+  }
+  if (/\b(secret|credential|password|token|api[_ -]?key|ssh|cookie|session)\b/i.test(combined)) {
+    capabilities.add("credential_access");
+  }
+  if (/\b(delete|destroy|erase|wipe|purge|drop table|transfer|wire|purchase|buy|sell|payment|charge|invoice)\b/i.test(combined)) {
+    capabilities.add("financial_or_destructive");
+  }
+  if (/\b(post|put|patch|publish|upload|create issue|create ticket|send email|webhook|remote write)\b/i.test(combined)) {
+    capabilities.add("remote_write");
+  }
+  if (/\b(write file|save file|edit file|apply_patch|create file|rename file|delete file|move file|workspace)\b/i.test(combined)) {
+    capabilities.add("workspace_write");
+  }
+  if (/\b(read file|search file|grep|find|list files|read workspace|cat )\b/i.test(combined)) {
+    capabilities.add("read_local");
+  }
+  if (/\b(browser|web[_ -]?search|web[_ -]?fetch|crawl|scrape|fetch url|open url|http get|request url)\b/i.test(combined)) {
+    capabilities.add("read_remote");
+  }
+  return [...capabilities];
+}
+
+function resolveToolCapabilities(toolCall, capabilityMap = {}) {
+  const toolName = String(toolCall?.function?.name || toolCall?.name || "").trim();
+  const explicit = capabilityMap[toolName];
+  if (Array.isArray(explicit) && explicit.length) return explicit;
+  return inferCapabilitiesFromToolName(toolName, String(toolCall?.function?.arguments || ""));
 }
 
 function extractLastUserMessage(messages) {
@@ -718,14 +788,24 @@ function createRuntime(config) {
     const requested = classifyRequestedModel(normalized.requestedModel);
     const hintedCostMode = String(astrolabeMeta.cost_mode || metadata.cost_mode || "").trim().toLowerCase();
     const hintedLatencyMode = String(astrolabeMeta.latency_mode || metadata.latency_mode || "").trim().toLowerCase();
+    const lastModelValue = String(astrolabeMeta.last_model || metadata.last_model || "").trim();
+    const lastLaneValue = String(astrolabeMeta.last_lane || metadata.last_lane || "").trim().toLowerCase();
+    const sessionPhase = String(astrolabeMeta.session_phase || metadata.session_phase || "").trim().toLowerCase() || "active";
     return {
       requested,
       toolProfile: String(astrolabeMeta.tool_profile || metadata.tool_profile || "").trim().toLowerCase() || "default",
+      toolCapabilities: normalizeToolCapabilitiesMap(astrolabeMeta.tool_capabilities || metadata.tool_capabilities),
       untrustedContent: Boolean(astrolabeMeta.untrusted_content || metadata.untrusted_content),
       approvalRequired: Boolean(astrolabeMeta.approval_required || metadata.approval_required),
       trustBoundary: String(astrolabeMeta.trust_boundary || metadata.trust_boundary || "").trim().toLowerCase() || "default",
       costMode: hintedCostMode === "strict" ? "strict" : hintedCostMode === "cheap" ? "strict" : "default",
-      latencyMode: hintedLatencyMode === "fast" ? "fast" : "default"
+      latencyMode: hintedLatencyMode === "fast" ? "fast" : "default",
+      lastModel: lastModelValue,
+      lastModelKey: resolveModelAlias(lastModelValue) ? resolveModelKeyFromId(lastModelValue) || resolveModelAlias(lastModelValue) : null,
+      lastLane: lastLaneValue,
+      sessionPhase,
+      stickyExecutor: astrolabeMeta.sticky_executor === false || metadata.sticky_executor === false ? false : true,
+      allowPreview: Boolean(astrolabeMeta.allow_preview || metadata.allow_preview)
     };
   }
 
@@ -829,6 +909,35 @@ function createRuntime(config) {
     return [{ role: "system", content: HIGH_STAKES_POLICY_PROMPT }, ...messages];
   }
 
+  function isLowRiskUnambiguousHeuristic(heuristic, features, safetyGate) {
+    return (
+      LOW_RISK_CATEGORIES.has(heuristic.categoryId) &&
+      heuristic.complexity === "simple" &&
+      !features.hasMultimodal &&
+      !features.hasToolsDeclared &&
+      !features.toolMessages &&
+      !safetyGate.triggered
+    );
+  }
+
+  function hasHardLaneTrigger(normalized, hints, features, safetyGate) {
+    if (safetyGate.triggered || hints.approvalRequired) return true;
+    if (features.hasMultimodal) return true;
+    if (hasExplicitStructuredOutputRequest(normalized, hints)) return true;
+    return false;
+  }
+
+  function shouldUseModelClassifier(normalized, hints, features, safetyGate, heuristic) {
+    if (config.FORCE_MODEL_ID) return false;
+    if (hints.requested?.type === "raw") return false;
+    if (hints.requested?.type === "virtual" && hints.requested?.lane && hints.requested.lane !== "auto") return false;
+    if (!config.SKIP_LOW_RISK_CLASSIFIER) return true;
+    if (hasHardLaneTrigger(normalized, hints, features, safetyGate)) return false;
+    if (config.STICKY_EXECUTOR_ENABLED && hints.stickyExecutor && hints.lastModelKey && hints.sessionPhase !== "casual") return false;
+    if (isLowRiskUnambiguousHeuristic(heuristic, features, safetyGate)) return false;
+    return true;
+  }
+
   function validateResponsesUrlParts(normalized) {
     if (normalized.api !== "responses") return;
     const urls = collectResponsesUrlParts(normalized.responsesInput);
@@ -867,9 +976,11 @@ function createRuntime(config) {
     throw lastError || new Error("No model candidates available.");
   }
 
-  async function classifyRequest(lastUserMessage, recentContext, features, safetyGate, hints) {
+  async function classifyRequest(normalized, lastUserMessage, recentContext, features, safetyGate, hints) {
     const heuristic = heuristicClassification(lastUserMessage, recentContext, features, safetyGate, hints);
-    if (config.FORCE_MODEL_ID) return heuristic;
+    if (!shouldUseModelClassifier(normalized, hints, features, safetyGate, heuristic)) {
+      return heuristic;
+    }
     const classifierCandidates = buildCandidatesFromKeys(
       [config.CLASSIFIER_MODEL_KEY, "glm47Flash", "grok"],
       { multimodal: false }
@@ -1049,6 +1160,54 @@ function createRuntime(config) {
     return guarded;
   }
 
+  function canUseExperimentalCandidates(hints = {}) {
+    return Boolean(config.ALLOW_PREVIEW_MODELS && hints.allowPreview);
+  }
+
+  function applyStickyExecutor(routeDecision, hints = {}, features = {}, modifiers = []) {
+    const stickyBase = {
+      ...routeDecision,
+      stickyApplied: false,
+      stickyReason: "not_applicable"
+    };
+    if (!config.STICKY_EXECUTOR_ENABLED) return { ...stickyBase, stickyReason: "disabled" };
+    if (hints.stickyExecutor === false) return { ...stickyBase, stickyReason: "disabled_by_request" };
+    if (!hints.lastModelKey) return { ...stickyBase, stickyReason: "no_last_model" };
+    if (hints.sessionPhase === "casual") return { ...stickyBase, stickyReason: "casual_session" };
+    if (routeDecision.label === "FORCED" || routeDecision.label === "PINNED") return { ...stickyBase, stickyReason: "explicit_model" };
+    if (modifiers.includes("untrusted_content") && (features.hasToolsDeclared || features.toolMessages > 0)) {
+      return { ...stickyBase, stickyReason: "safety_floor" };
+    }
+    if (routeDecision.lane !== hints.lastLane && STICKY_BREAK_LANES.has(routeDecision.lane)) {
+      return { ...stickyBase, stickyReason: "lane_change" };
+    }
+    const lastModel = modelEntryForKey(hints.lastModelKey);
+    if (!lastModel) return { ...stickyBase, stickyReason: "unknown_last_model" };
+    if ((lastModel.preview || lastModel.experimental) && !canUseExperimentalCandidates(hints)) {
+      return { ...stickyBase, stickyReason: "preview_disallowed" };
+    }
+    if (modifiers.includes("multimodal") && !lastModel.modalities?.includes("image")) {
+      return { ...stickyBase, stickyReason: "modality_mismatch" };
+    }
+    const laneConfig = LANE_MANIFEST[routeDecision.lane] || LANE_MANIFEST.auto;
+    const laneKeys = dedupe([
+      routeDecision.modelKey,
+      ...(laneConfig.defaultCandidates || []),
+      ...(laneConfig.fallbackCandidates || []),
+      ...(canUseExperimentalCandidates(hints) ? laneConfig.experimentalCandidates || [] : []),
+      ...(MODEL_FALLBACKS[routeDecision.modelKey] || [])
+    ]);
+    if (!laneKeys.includes(hints.lastModelKey)) return { ...stickyBase, stickyReason: "not_in_lane" };
+    return {
+      ...stickyBase,
+      modelKey: hints.lastModelKey,
+      modelId: modelIdForKey(hints.lastModelKey),
+      label: routeDecision.label === "DEFAULT" ? "STICKY" : routeDecision.label,
+      stickyApplied: true,
+      stickyReason: "reused_last_model"
+    };
+  }
+
   function resolveCategoryRoute(classification, hints, features, modifiers, safetyGate, actionClass) {
     const adjustedComplexity = applyRoutingProfile(classification.complexity, classification.categoryId);
     const routeIntent = {
@@ -1083,7 +1242,8 @@ function createRuntime(config) {
       injectionRisk: CATEGORY_BY_ID.get(classification.categoryId)?.injectionRisk || "UNKNOWN",
       safetyGateTriggered: safetyGate.triggered
     };
-    return applyCostGuardrails(routeDecision, routeIntent, features.requestText || "", features, modifiers, hints);
+    const guarded = applyCostGuardrails(routeDecision, routeIntent, features.requestText || "", features, modifiers, hints);
+    return applyStickyExecutor(guarded, hints, features, modifiers);
   }
 
   function buildCandidatesForRoute(routeDecision, features, modifiers = [], hints = {}) {
@@ -1095,10 +1255,12 @@ function createRuntime(config) {
       return buildCandidatesFromKeys([routeDecision.modelKey, ...fallbackKeys], { multimodal: modifiers.includes("multimodal") });
     }
     const laneConfig = LANE_MANIFEST[routeDecision.lane] || LANE_MANIFEST.auto;
+    const experimentalCandidates = canUseExperimentalCandidates(hints) ? laneConfig?.experimentalCandidates || [] : [];
     const keys = [
       routeDecision.modelKey,
       ...(laneConfig?.defaultCandidates || []),
       ...(laneConfig?.fallbackCandidates || []),
+      ...experimentalCandidates,
       ...(MODEL_FALLBACKS[routeDecision.modelKey] || [])
     ];
     let candidates = buildCandidatesFromKeys(keys, { multimodal: modifiers.includes("multimodal") });
@@ -1107,8 +1269,11 @@ function createRuntime(config) {
         (candidate) => !["grok", "dsCoder", "gpt5Nano", "gpt54Nano", "qwen35Flash", "qwenCoderNext", "m25"].includes(candidate.key)
       );
     }
-    if (!["research", "vision"].includes(routeDecision.lane)) {
-      candidates = candidates.filter((candidate) => !modelEntryForKey(candidate.key)?.preview);
+    if (!canUseExperimentalCandidates(hints)) {
+      candidates = candidates.filter((candidate) => {
+        const model = modelEntryForKey(candidate.key);
+        return !model?.preview && !model?.experimental;
+      });
     }
     return candidates;
   }
@@ -1158,18 +1323,23 @@ function createRuntime(config) {
   }
 
   function buildProviderOverrides(routeDecision, modifiers = [], hints = {}) {
-    const provider = {
-      allow_fallbacks: true,
-      require_parameters: Boolean(modifiers.includes("needs_strict_schema"))
-    };
-    provider.sort = hints.latencyMode === "fast" ? "latency" : hints.costMode === "strict" || routeDecision.lane === "cheap" ? "price" : "throughput";
-    if (hints.trustBoundary === "private" || hints.trustBoundary === "sensitive") provider.zdr = true;
+    const provider = { allow_fallbacks: true };
+    if (modifiers.includes("needs_strict_schema")) provider.require_parameters = true;
+    if (hints.latencyMode === "fast") provider.sort = "latency";
+    else if (hints.costMode === "strict" || routeDecision.lane === "cheap") provider.sort = "price";
+    if (
+      hints.trustBoundary === "private" ||
+      hints.trustBoundary === "sensitive" ||
+      config.DEFAULT_PROFILE === "safe-untrusted"
+    ) {
+      provider.zdr = true;
+    }
     return provider;
   }
 
   function buildPlugins(normalized, routeDecision, modifiers) {
     const plugins = [];
-    if (!normalized.stream && (normalized.responseFormat || modifiers.includes("needs_strict_schema"))) {
+    if (!normalized.stream && (isStrictSchemaFormat(normalized.responseFormat) || modifiers.includes("needs_strict_schema"))) {
       plugins.push({ id: "response-healing" });
     }
     if (modifiers.includes("long_context") && routeDecision.lane === "research") plugins.push({ id: "context-compression" });
@@ -1319,21 +1489,33 @@ function createRuntime(config) {
     return [];
   }
 
+  function shouldRunVerifier(routeDecision, modifiers, options = {}) {
+    if (!config.SKIP_LOW_RISK_VERIFIER) return true;
+    if (routeDecision.lane === "safe") return true;
+    if (routeDecision.lane === "strict-json" || modifiers.includes("needs_strict_schema")) return true;
+    if (options.toolCalls?.length) return true;
+    if (options.untrustedWithTools) return true;
+    if (options.retried || options.recovered || options.escalated) return true;
+    return false;
+  }
+
   function classifyToolPolicy(normalized, toolCalls, hints) {
     if (!toolCalls.length) return { status: "allow", reason: "No outbound tool calls." };
     if (hints.toolProfile === "blocked") return { status: "blocked", reason: "Tool profile blocks all tool calls." };
     for (const toolCall of toolCalls) {
       const toolName = String(toolCall?.function?.name || "");
-      const args = String(toolCall?.function?.arguments || "");
-      const combined = `${toolName} ${args}`;
-      if (hints.toolProfile === "read-only" && TOOL_MUTATION_REGEX.test(combined)) {
+      const capabilities = resolveToolCapabilities(toolCall, hints.toolCapabilities);
+      if (hints.toolProfile === "read-only" && capabilities.some((capability) => !SAFE_TOOL_CAPABILITIES.has(capability))) {
         return { status: "blocked", reason: `Read-only tool profile blocked ${toolName}.` };
       }
-      if (TOOL_APPROVAL_REGEX.test(combined) || hints.approvalRequired) {
-        return { status: "approval_required", reason: `Tool call ${toolName} requires confirmation.` };
+      if (hints.untrustedContent && capabilities.some((capability) => BLOCKED_UNTRUSTED_CAPABILITIES.has(capability))) {
+        return { status: "blocked", reason: `Untrusted-content route blocks ${toolName}.` };
       }
-      if (hints.untrustedContent && TOOL_BLOCK_REGEX.test(combined)) {
+      if (hints.untrustedContent && capabilities.includes("code_exec")) {
         return { status: "approval_required", reason: `Untrusted-content route requires confirmation for ${toolName}.` };
+      }
+      if (capabilities.some((capability) => APPROVAL_TOOL_CAPABILITIES.has(capability)) || hints.approvalRequired) {
+        return { status: "approval_required", reason: `Tool call ${toolName} requires confirmation.` };
       }
     }
     return { status: "allow", reason: "Tool calls passed policy checks." };
@@ -1420,6 +1602,8 @@ function createRuntime(config) {
       adjusted_complexity: routeDecision.adjustedComplexity,
       lane: routeDecision.lane,
       route_label: routeDecision.label,
+      sticky_applied: Boolean(routeDecision.stickyApplied),
+      sticky_reason: routeDecision.stickyReason || null,
       modifiers,
       candidate_models: candidates.map((candidate) => candidate.modelId),
       chosen_model: execution.initialModelId,
@@ -1428,6 +1612,7 @@ function createRuntime(config) {
       provider_policy: execution.providerPolicy,
       cache_policy: modifiers.includes("cacheable") ? "cache-friendly" : "default",
       reasoning_continuity: execution.reasoningContinuity,
+      verification_skipped: Boolean(execution.verificationSkipped),
       verifier_result: verifier
         ? {
             policy: verifier.policy || determineVerificationPolicy(routeDecision, modifiers),
@@ -1437,6 +1622,7 @@ function createRuntime(config) {
         : null,
       tool_policy: toolPolicy,
       retry_path: execution.retryPath,
+      transport_fallback_only: Boolean(execution.transportFallbackOnly),
       estimated_cost: execution.cost
     };
   }
@@ -1453,6 +1639,10 @@ function createRuntime(config) {
       "x-astrolabe-route-label": metadata.routeLabel,
       "x-astrolabe-upstream-api": metadata.upstreamApi,
       "x-astrolabe-escalated": String(Boolean(metadata.escalated)),
+      "x-astrolabe-sticky-applied": String(Boolean(metadata.stickyApplied)),
+      "x-astrolabe-sticky-reason": metadata.stickyReason || "",
+      "x-astrolabe-verification-skipped": String(Boolean(metadata.verificationSkipped)),
+      "x-astrolabe-transport-fallback-only": String(Boolean(metadata.transportFallbackOnly)),
       "x-astrolabe-confidence-score": metadata.confidenceScore == null ? "" : String(metadata.confidenceScore),
       "x-astrolabe-low-confidence": String(Boolean(metadata.lowConfidence)),
       "x-astrolabe-safety-gate": String(Boolean(metadata.safetyGateTriggered))
@@ -1547,7 +1737,7 @@ function createRuntime(config) {
       throw error;
     }
     validateResponsesUrlParts(normalized);
-    const classification = await classifyRequest(lastUserMessage, recentContext, features, safetyGate, hints);
+    const classification = await classifyRequest(normalized, lastUserMessage, recentContext, features, safetyGate, hints);
     const actionClass = inferActionClass(normalized, hints, features, classification, safetyGate);
     const modifiers = collectRouteModifiers(normalized, hints, features, classification, safetyGate, actionClass);
     const routeDecision = resolveCategoryRoute(classification, hints, features, modifiers, safetyGate, actionClass);
@@ -1634,7 +1824,19 @@ function createRuntime(config) {
       throw lastError || new Error("No model candidates available.");
     };
 
-    const execution = await executeAcrossCandidates(candidates, normalized.api);
+    const initialTier = candidates[0]?.tier || null;
+    const sameTierCandidates = candidates.filter((candidate, index) => index === 0 || candidate.tier === initialTier);
+    const widerTransportCandidates = candidates.filter((candidate, index) => index !== 0 && candidate.tier !== initialTier);
+    let execution;
+    let transportRetried = false;
+    try {
+      execution = await executeAcrossCandidates(sameTierCandidates, normalized.api);
+    } catch (error) {
+      if (!widerTransportCandidates.length) throw error;
+      transportRetried = true;
+      execution = await executeAcrossCandidates(widerTransportCandidates, normalized.api);
+    }
+    transportRetried = transportRetried || executionRetryPath.length > 1 || execution.key !== candidates[0]?.key;
     let primaryApi = execution.api;
 
     const initialModelId = execution.modelId;
@@ -1643,10 +1845,12 @@ function createRuntime(config) {
     let finalResult = execution.result;
     let verifier = null;
     let escalated = false;
+    let recovered = false;
     let lowConfidence = false;
+    let verificationSkipped = false;
     let toolPolicy = { status: "allow", reason: "Streaming responses skip post-verification." };
 
-    if (!normalized.stream && routeDecision.label !== "FORCED") {
+    if (!normalized.stream) {
       const ensureValidatedResult = async () => {
         const initialValidation = validateExecutionArtifacts(
           finalResult,
@@ -1669,19 +1873,19 @@ function createRuntime(config) {
         });
         let lastFailure = initialValidation;
         for (const candidate of recoveryCandidates) {
-          const recovered = await executeSingleCandidate(candidate, primaryApi);
+          const recoveredExecution = await executeSingleCandidate(candidate, primaryApi);
           const validation = validateExecutionArtifacts(
-            recovered.result,
+            recoveredExecution.result,
             normalized,
-            recovered.api === "responses" ? "responses" : "chat",
+            recoveredExecution.api === "responses" ? "responses" : "chat",
             modifiers
           );
           if (validation.ok) {
-            escalated = true;
-            finalResult = recovered.result;
+            recovered = true;
+            finalResult = recoveredExecution.result;
             finalModelId = candidate.modelId;
             finalModelKey = candidate.key;
-            primaryApi = recovered.api;
+            primaryApi = recoveredExecution.api;
             return;
           }
           lastFailure = validation;
@@ -1695,32 +1899,48 @@ function createRuntime(config) {
 
       await ensureValidatedResult();
 
-      const answerText =
-        normalized.api === "responses" && primaryApi === "responses"
-          ? extractResponsesOutputText(finalResult)
-          : safeText(extractChatAssistantMessage(finalResult)?.content);
-      verifier = await runVerifier(normalized, routeDecision, modifiers, lastUserMessage, answerText);
-      const target = buildEscalationTarget(finalModelKey, verifier.score, routeDecision, features, modifiers);
-      if (target && target !== finalModelKey) {
-        escalated = true;
-        const escalationCandidates = buildCandidatesFromKeys(
-          [target, ...(MODEL_FALLBACKS[target] || [])],
-          { multimodal: modifiers.includes("multimodal") }
-        );
-        const escalatedExecution = await executeAcrossCandidates(escalationCandidates, primaryApi);
-        finalResult = escalatedExecution.result;
-        finalModelId = escalatedExecution.modelId;
-        finalModelKey = escalatedExecution.key;
-        primaryApi = escalatedExecution.api;
-        await ensureValidatedResult();
-        const escalatedAnswerText =
+      let toolCalls = extractToolCalls(finalResult, primaryApi === "responses" ? "responses" : "chat");
+      const untrustedWithTools =
+        hints.untrustedContent && (features.hasToolsDeclared || features.toolMessages > 0 || toolCalls.length > 0);
+      if (
+        shouldRunVerifier(routeDecision, modifiers, {
+          toolCalls,
+          untrustedWithTools,
+          retried: transportRetried,
+          recovered,
+          escalated
+        })
+      ) {
+        const answerText =
           normalized.api === "responses" && primaryApi === "responses"
             ? extractResponsesOutputText(finalResult)
             : safeText(extractChatAssistantMessage(finalResult)?.content);
-        verifier = await runVerifier(normalized, routeDecision, modifiers, lastUserMessage, escalatedAnswerText);
+        verifier = await runVerifier(normalized, routeDecision, modifiers, lastUserMessage, answerText);
+        const target = buildEscalationTarget(finalModelKey, verifier.score, routeDecision, features, modifiers);
+        if (target && target !== finalModelKey) {
+          escalated = true;
+          const escalationCandidates = buildCandidatesFromKeys(
+            [target, ...(MODEL_FALLBACKS[target] || [])],
+            { multimodal: modifiers.includes("multimodal") }
+          );
+          const escalatedExecution = await executeAcrossCandidates(escalationCandidates, primaryApi);
+          finalResult = escalatedExecution.result;
+          finalModelId = escalatedExecution.modelId;
+          finalModelKey = escalatedExecution.key;
+          primaryApi = escalatedExecution.api;
+          await ensureValidatedResult();
+          const escalatedAnswerText =
+            normalized.api === "responses" && primaryApi === "responses"
+              ? extractResponsesOutputText(finalResult)
+              : safeText(extractChatAssistantMessage(finalResult)?.content);
+          verifier = await runVerifier(normalized, routeDecision, modifiers, lastUserMessage, escalatedAnswerText);
+          toolCalls = extractToolCalls(finalResult, primaryApi === "responses" ? "responses" : "chat");
+        }
+        lowConfidence = verifier.score <= (routeDecision.lane === "safe" ? 4 : 3);
+      } else {
+        verificationSkipped = true;
       }
-      lowConfidence = verifier.score <= (routeDecision.lane === "safe" ? 4 : 3);
-      toolPolicy = classifyToolPolicy(normalized, extractToolCalls(finalResult, primaryApi === "responses" ? "responses" : "chat"), hints);
+      toolPolicy = classifyToolPolicy(normalized, toolCalls, hints);
       if (toolPolicy.status === "blocked") {
         const error = new Error(toolPolicy.reason);
         error.status = 409;
@@ -1744,11 +1964,14 @@ function createRuntime(config) {
       finalResult,
       primaryApi,
       escalated,
+      recovered,
       verifier,
+      verificationSkipped,
       lowConfidence,
       toolPolicy,
       providerPolicy: buildProviderOverrides(routeDecision, modifiers, hints),
       retryPath: executionRetryPath,
+      transportFallbackOnly: transportRetried && !recovered && !escalated,
       cost: estimateCost(finalModelId, finalResult?.usage),
       reasoningContinuity: summarizeReasoningContinuity(normalized, finalModelKey, primaryApi)
     };
@@ -1768,6 +1991,8 @@ function createRuntime(config) {
         upstreamApi: execution.primaryApi,
         providerPolicy: execution.providerPolicy,
         retryPath: execution.retryPath,
+        verificationSkipped: execution.verificationSkipped,
+        transportFallbackOnly: execution.transportFallbackOnly,
         reasoningContinuity: execution.reasoningContinuity,
         cost: execution.cost
       },
@@ -1785,6 +2010,10 @@ function createRuntime(config) {
       routeLabel: execution.routeDecision.label,
       upstreamApi: execution.primaryApi,
       escalated: execution.escalated,
+      stickyApplied: execution.routeDecision.stickyApplied,
+      stickyReason: execution.routeDecision.stickyReason,
+      verificationSkipped: execution.verificationSkipped,
+      transportFallbackOnly: execution.transportFallbackOnly,
       confidenceScore: execution.verifier?.score,
       lowConfidence: execution.lowConfidence,
       safetyGateTriggered: execution.routeDecision.safetyGateTriggered
@@ -1807,6 +2036,8 @@ function createRuntime(config) {
         upstreamApi: execution.primaryApi,
         providerPolicy: execution.providerPolicy,
         retryPath: execution.retryPath,
+        verificationSkipped: execution.verificationSkipped,
+        transportFallbackOnly: execution.transportFallbackOnly,
         reasoningContinuity: execution.reasoningContinuity,
         cost: execution.cost
       },
@@ -1824,6 +2055,10 @@ function createRuntime(config) {
       routeLabel: execution.routeDecision.label,
       upstreamApi: execution.primaryApi,
       escalated: execution.escalated,
+      stickyApplied: execution.routeDecision.stickyApplied,
+      stickyReason: execution.routeDecision.stickyReason,
+      verificationSkipped: execution.verificationSkipped,
+      transportFallbackOnly: execution.transportFallbackOnly,
       confidenceScore: execution.verifier?.score,
       lowConfidence: execution.lowConfidence,
       safetyGateTriggered: execution.routeDecision.safetyGateTriggered
@@ -1844,7 +2079,8 @@ function createRuntime(config) {
         active_default: Boolean(model.activeDefault),
         raw_only: Boolean(model.rawOnly),
         preview: Boolean(model.preview),
-        availability_status: model.preview ? "preview_experimental" : model.rawOnly ? "raw_available" : "active_default",
+        experimental: Boolean(model.experimental || model.preview),
+        availability_status: model.experimental || model.preview ? "experimental" : model.rawOnly ? "raw_only" : "default",
         pricing: {
           input_per_1m: model.inputCost,
           output_per_1m: model.outputCost
@@ -1860,9 +2096,9 @@ function createRuntime(config) {
       return {
         object: "list",
         buckets: {
-          active_defaults: data.filter((model) => model.active_default).map((model) => model.id),
-          raw_available: data.filter((model) => model.raw_only).map((model) => model.id),
-          preview_experimental: data.filter((model) => model.preview).map((model) => model.id)
+          defaults: data.filter((model) => model.active_default).map((model) => model.id),
+          raw_only: data.filter((model) => model.raw_only).map((model) => model.id),
+          experimental: data.filter((model) => model.experimental).map((model) => model.id)
         },
         data
       };
@@ -1888,7 +2124,8 @@ function createRuntime(config) {
         id: configEntry.id,
         lane,
         description: configEntry.description,
-        preview_allowed: ["research", "vision"].includes(lane),
+        experimental_supported: Boolean((configEntry.experimentalCandidates || []).length),
+        preview_allowed: canUseExperimentalCandidates({ allowPreview: true }),
         default_candidates: (configEntry.defaultCandidates || []).map((key) => ({
           key,
           id: modelIdForKey(key),
@@ -1900,6 +2137,13 @@ function createRuntime(config) {
           id: modelIdForKey(key),
           name: modelShortForKey(key),
           preview: Boolean(modelEntryForKey(key)?.preview)
+        })),
+        experimental_candidates: (configEntry.experimentalCandidates || []).map((key) => ({
+          key,
+          id: modelIdForKey(key),
+          name: modelShortForKey(key),
+          preview: Boolean(modelEntryForKey(key)?.preview),
+          experimental: Boolean(modelEntryForKey(key)?.experimental || modelEntryForKey(key)?.preview)
         })),
         trigger_rules: [
           lane === "auto" ? "default non-trivial OpenClaw work" : null,
@@ -1923,11 +2167,18 @@ function createRuntime(config) {
     const hints = {
       requested: options.requested || { type: "virtual", lane: "auto", requestedModel: "astrolabe/auto" },
       toolProfile: options.toolProfile || "default",
+      toolCapabilities: normalizeToolCapabilitiesMap(options.toolCapabilities),
       untrustedContent: Boolean(options.untrustedContent),
       approvalRequired: Boolean(options.approvalRequired),
       trustBoundary: options.trustBoundary || "default",
       costMode: options.costMode || "default",
-      latencyMode: options.latencyMode || "default"
+      latencyMode: options.latencyMode || "default",
+      lastModel: options.lastModel || "",
+      lastModelKey: options.lastModelKey || (options.lastModel ? resolveModelKeyFromId(options.lastModel) || resolveModelAlias(options.lastModel) : null),
+      lastLane: options.lastLane || "",
+      sessionPhase: options.sessionPhase || "active",
+      stickyExecutor: options.stickyExecutor === false ? false : true,
+      allowPreview: Boolean(options.allowPreview)
     };
     const features = {
       hasMultimodal: Boolean(options.hasMultimodal),
@@ -1995,6 +2246,7 @@ function createRuntime(config) {
       buildCandidatesForRoute,
       buildEscalationTarget,
       buildProviderOverrides,
+      classifyToolPolicy,
       classifyRequestedModel,
       collectRouteModifiers,
       detectSafetyGate,
@@ -2015,6 +2267,8 @@ function createRuntime(config) {
       resolveModelKeyFromId,
       serializeLaneList,
       serializeModelList,
+      shouldRunVerifier,
+      shouldUseModelClassifier,
       shouldEscalateFromSelfCheck
     }
   };

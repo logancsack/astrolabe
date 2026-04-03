@@ -30,7 +30,9 @@ OpenRouter is the maintainer reference for model IDs and pricing, but the active
 | `gem25Pro` | `google/gemini-2.5-pro` | Stable premium multimodal branch |
 | `gem31FlashLite` | `google/gemini-3.1-flash-lite-preview` | Preview multimodal fast path |
 | `gem31Pro` | `google/gemini-3.1-pro-preview` | Preview multimodal research branch |
-| `grok420Beta` | `x-ai/grok-4.20-beta` | Selective preview premium research branch |
+| `grok420` | `x-ai/grok-4.20` | Selective preview premium research branch |
+| `mimoV2Flash` | `xiaomi/mimo-v2-flash` | Raw-only evaluation model |
+| `mistralSmall4` | `mistralai/mistral-small-2603` | Raw-only evaluation model |
 | `sonnet` | `anthropic/claude-sonnet-4.6` | Safe-lane default and premium escalation |
 | `opus` | `anthropic/claude-opus-4.6` | Final escalation |
 
@@ -60,6 +62,8 @@ These are the recommended public-facing models for OpenClaw users:
 - `m25` is intentionally not the main default anymore.
 - `gpt-5-nano` owns the control plane by default.
 - Kimi and GLM stay first-class specialists.
-- Preview models are allowed selectively in research and vision, not as default `auto` picks.
+- Preview and experimental models are opt-in and excluded from default lane manifests.
+- `grok420`, `gem31Pro`, and `gem31FlashLite` only surface when preview routing is explicitly enabled.
+- `mimoV2Flash` and `mistralSmall4` are raw-only eval models, not active defaults.
 - Raw model additions should be checked into the manifest explicitly.
 - Use `npm run validate:models` to compare the static manifest against OpenRouter before releasing roster changes.

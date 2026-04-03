@@ -85,6 +85,7 @@ function createModelEntry(key, values) {
     activeDefault: false,
     rawOnly: false,
     preview: false,
+    experimental: false,
     toolReady: true,
     longContext: false,
     multimodal: false,
@@ -362,17 +363,17 @@ const RAW_MODEL_MANIFEST = {
       "top_p"
     ]
   }),
-  grok420Beta: createModelEntry("grok420Beta", {
-    id: "x-ai/grok-4.20-beta",
-    short: "Grok 4.20 Beta",
-    tier: "PREVIEW",
+  grok420: createModelEntry("grok420", {
+    id: "x-ai/grok-4.20",
+    short: "Grok 4.20",
+    tier: "PREMIUM",
     inputCost: 2,
     outputCost: 6,
     contextWindow: 2000000,
     modalities: ["text"],
-    preview: true,
-    roleTags: ["premium_research_preview"],
-    laneTags: ["research", "preview"],
+    experimental: true,
+    roleTags: ["premium_research_experimental"],
+    laneTags: ["research", "experimental"],
     supportedParameters: [
       "include_reasoning",
       "logprobs",
@@ -385,6 +386,65 @@ const RAW_MODEL_MANIFEST = {
       "tool_choice",
       "tools",
       "top_logprobs",
+      "top_p"
+    ]
+  }),
+  mimoV2Flash: createModelEntry("mimoV2Flash", {
+    id: "xiaomi/mimo-v2-flash",
+    short: "MiMo V2 Flash",
+    tier: "RAW_ONLY",
+    inputCost: 0.09,
+    outputCost: 0.29,
+    contextWindow: 262144,
+    modalities: ["text"],
+    rawOnly: true,
+    roleTags: ["eval_candidate", "agentic_value"],
+    laneTags: ["raw", "evaluation"],
+    supportedParameters: [
+      "frequency_penalty",
+      "include_reasoning",
+      "logit_bias",
+      "max_tokens",
+      "min_p",
+      "presence_penalty",
+      "reasoning",
+      "repetition_penalty",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
+      "top_k",
+      "top_p"
+    ]
+  }),
+  mistralSmall4: createModelEntry("mistralSmall4", {
+    id: "mistralai/mistral-small-2603",
+    short: "Mistral Small 4",
+    tier: "RAW_ONLY",
+    inputCost: 0.15,
+    outputCost: 0.6,
+    contextWindow: 262144,
+    modalities: ["text", "image"],
+    rawOnly: true,
+    multimodal: true,
+    roleTags: ["eval_candidate", "multimodal_utility"],
+    laneTags: ["raw", "evaluation"],
+    supportedParameters: [
+      "frequency_penalty",
+      "include_reasoning",
+      "max_tokens",
+      "presence_penalty",
+      "reasoning",
+      "response_format",
+      "seed",
+      "stop",
+      "structured_outputs",
+      "temperature",
+      "tool_choice",
+      "tools",
       "top_p"
     ]
   }),
@@ -549,11 +609,11 @@ const RAW_MODEL_MANIFEST = {
     outputCost: 10,
     contextWindow: 1048576,
     modalities: ["text", "image"],
+    activeDefault: true,
     multimodal: true,
     longContext: true,
-    rawOnly: true,
     roleTags: ["premium_multimodal_stable"],
-    laneTags: ["vision", "raw"],
+    laneTags: ["vision"],
     supportedParameters: [
       "include_reasoning",
       "max_tokens",
@@ -577,10 +637,12 @@ const RAW_MODEL_MANIFEST = {
     contextWindow: 1048576,
     modalities: ["text", "image"],
     preview: true,
+    experimental: true,
+    rawOnly: true,
     multimodal: true,
     longContext: true,
     roleTags: ["preview_google_fast"],
-    laneTags: ["vision", "preview"],
+    laneTags: ["vision", "preview", "experimental", "raw"],
     supportedParameters: [
       "include_reasoning",
       "max_tokens",
@@ -604,10 +666,12 @@ const RAW_MODEL_MANIFEST = {
     contextWindow: 1048576,
     modalities: ["text", "image"],
     preview: true,
+    experimental: true,
+    rawOnly: true,
     multimodal: true,
     longContext: true,
     roleTags: ["premium_multimodal_preview", "preview_research"],
-    laneTags: ["vision", "research", "preview"],
+    laneTags: ["vision", "research", "preview", "experimental", "raw"],
     supportedParameters: [
       "include_reasoning",
       "max_tokens",
@@ -681,7 +745,8 @@ const RAW_MODEL_MANIFEST = {
 const MODEL_ALIASES = {
   nano: "gpt5Nano",
   mini: "gpt54Mini",
-  gemFlash: "gem25FlashLite"
+  gemFlash: "gem25FlashLite",
+  grok420Beta: "grok420"
 };
 
 for (const [alias, key] of Object.entries(MODEL_ALIASES)) {
@@ -738,43 +803,50 @@ const LANE_MANIFEST = {
     id: "lane_auto",
     description: "m27-first default lane for normal OpenClaw work.",
     defaultCandidates: ["m27", "qwen35Plus", "kimiThinking", "kimiK25", "sonnet", "opus"],
-    fallbackCandidates: ["grok", "m25", "dsCoder", "qwen35Flash"]
+    fallbackCandidates: ["grok", "m25", "dsCoder", "qwen35Flash"],
+    experimentalCandidates: []
   },
   coding: {
     id: "lane_coding",
     description: "Code editing, repo work, patching, and debug loops.",
     defaultCandidates: ["m27", "qwenCoderNext", "glm5", "sonnet", "opus"],
-    fallbackCandidates: ["dsCoder", "m25"]
+    fallbackCandidates: ["dsCoder", "m25"],
+    experimentalCandidates: []
   },
   research: {
     id: "lane_research",
     description: "Long-context synthesis, comparative analysis, and source-heavy research.",
-    defaultCandidates: ["qwen35Plus", "kimiThinking", "m27", "grok420Beta", "sonnet", "opus"],
-    fallbackCandidates: ["gem31Pro", "gpt54"]
+    defaultCandidates: ["qwen35Plus", "kimiThinking", "m27", "sonnet", "opus"],
+    fallbackCandidates: ["gpt54"],
+    experimentalCandidates: ["grok420", "gem31Pro"]
   },
   vision: {
     id: "lane_vision",
     description: "Multimodal, screenshots, documents, and image-grounded tasks.",
-    defaultCandidates: ["kimiK25", "qwen35Plus", "gem25Pro", "gem31Pro", "sonnet"],
-    fallbackCandidates: ["gem25FlashLite", "grok"]
+    defaultCandidates: ["kimiK25", "qwen35Plus", "gem25Pro", "sonnet"],
+    fallbackCandidates: ["gem25FlashLite", "grok"],
+    experimentalCandidates: ["gem31Pro", "gem31FlashLite"]
   },
   "strict-json": {
     id: "lane_strict_json",
     description: "m27-first structured output lane with specialist recovery after concrete validation failure.",
     defaultCandidates: ["m27", "glm47Flash", "glm5", "gpt54Mini", "gpt54", "sonnet"],
-    fallbackCandidates: ["m25"]
+    fallbackCandidates: ["m25"],
+    experimentalCandidates: []
   },
   cheap: {
     id: "lane_cheap",
     description: "Low-risk, high-efficiency routing for simple and budget-sensitive turns.",
     defaultCandidates: ["qwen35Flash", "grok", "m25", "dsCoder", "gpt5Nano"],
-    fallbackCandidates: ["gem25FlashLite", "m27"]
+    fallbackCandidates: ["gem25FlashLite", "m27"],
+    experimentalCandidates: []
   },
   safe: {
     id: "lane_safe",
     description: "High-stakes lane with conservative premium defaults.",
-    defaultCandidates: ["sonnet", "opus", "gpt54"],
-    fallbackCandidates: ["m27"]
+    defaultCandidates: ["sonnet", "opus"],
+    fallbackCandidates: ["m27"],
+    experimentalCandidates: []
   }
 };
 
@@ -792,7 +864,7 @@ const MODEL_FALLBACKS = {
   glm47Flash: ["glm5", "gpt54Mini", "sonnet"],
   glm5: ["gpt54Mini", "sonnet", "opus"],
   grok: ["qwen35Flash", "m25", "dsCoder"],
-  grok420Beta: ["qwen35Plus", "sonnet"],
+  grok420: ["qwen35Plus", "sonnet"],
   dsCoder: ["qwenCoderNext", "m25", "m27"],
   qwen35Flash: ["grok", "m25", "gem25FlashLite"],
   qwen35Plus: ["kimiThinking", "m27", "sonnet"],
