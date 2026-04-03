@@ -92,7 +92,7 @@ Compatibility aliases:
 - `astrolabe/coding`: `m27 -> qwenCoderNext -> glm5 -> sonnet -> opus`
 - `astrolabe/research`: `qwen35Plus -> kimiThinking -> m27 -> grok420Beta -> sonnet -> opus`
 - `astrolabe/vision`: `kimiK25 -> qwen35Plus -> gem25Pro -> gem31Pro -> sonnet`
-- `astrolabe/strict-json`: `glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet`
+- `astrolabe/strict-json`: `m27 -> glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet`
 - `astrolabe/cheap`: `qwen35Flash -> grok -> m25 -> dsCoder -> gpt5Nano`
 - `astrolabe/safe`: `sonnet -> opus -> gpt54`
 
@@ -102,7 +102,8 @@ Policy rules worth knowing:
 - `m25` is only used for strict-budget, fallback, or overflow scenarios.
 - Multimodal turns promote to the vision lane.
 - Tool availability alone does not imply `strict-json`.
-- Explicit structured output, schema-safe tool arguments, or repair flows promote to `glm47Flash` / `glm5`.
+- Explicit structured output and schema-sensitive work still use the `strict-json` lane, but `m27` gets the first attempt.
+- `glm47Flash`, `glm5`, and `gpt54Mini` are validation-recovery specialists, not first-pass defaults.
 - Tool-enabled requests with untrusted content cannot stay on weak cheap tiers.
 
 ## API surface

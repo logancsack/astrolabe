@@ -112,7 +112,16 @@ test("explicit structured output promotes strict-json lane", () => {
     requestText: "Return valid JSON only."
   });
   assert.equal(route.lane, "strict-json");
-  assert.equal(route.modelKey, "glm47Flash");
+  assert.equal(route.modelKey, "m27");
+});
+
+test("plain text response formats do not promote strict-json lane", () => {
+  const route = internals.resolveCategoryRoute("communication", "simple", {
+    responseFormat: { type: "text" },
+    requestText: "Just say hello."
+  });
+  assert.equal(route.lane, "cheap");
+  assert.equal(route.modelKey, "qwen35Flash");
 });
 
 test("untrusted content plus tools enforces the m27 safety floor", () => {
@@ -168,7 +177,7 @@ test("m25 escalation goes to m27 before premium models", () => {
   assert.equal(target, "m27");
 });
 
-test("m27 escalates to GLM 4.7 Flash on simple strict-json routes", () => {
+test("m27 does not self-check escalate on strict-json routes without validation failure", () => {
   const target = internals.buildEscalationTarget(
     "m27",
     2,
@@ -176,7 +185,7 @@ test("m27 escalates to GLM 4.7 Flash on simple strict-json routes", () => {
     {},
     ["needs_strict_schema"]
   );
-  assert.equal(target, "glm47Flash");
+  assert.equal(target, null);
 });
 
 test("m27 does not soft-escalate to Sonnet on ordinary routes", () => {

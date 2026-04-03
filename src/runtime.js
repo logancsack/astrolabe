@@ -554,9 +554,16 @@ function buildCandidatesFromKeys(keys, options = {}) {
   }));
 }
 
+function isStrictSchemaFormat(format) {
+  if (!format) return false;
+  if (typeof format === "string") return /\b(json|schema)\b/i.test(format);
+  const type = String(format.type || format.name || "").trim().toLowerCase();
+  return type === "json_object" || type === "json_schema";
+}
+
 function hasExplicitStructuredOutputRequest(normalized, hints = {}) {
   const text = String(normalized.inputText || "").toLowerCase();
-  if (normalized.responseFormat) return true;
+  if (isStrictSchemaFormat(normalized.responseFormat)) return true;
   if (hints.requested?.lane === "strict-json") return true;
   return /\b(json|json schema|schema-safe|structured output|tool arguments|function arguments|llm task|valid json)\b/i.test(text);
 }
@@ -985,10 +992,7 @@ function createRuntime(config) {
       if (routeIntent.adjustedComplexity === "complex" || routeIntent.adjustedComplexity === "critical") return "kimiThinking";
       return "m27";
     }
-    if (lane === "strict-json") {
-      if (routeIntent.adjustedComplexity === "complex" || routeIntent.adjustedComplexity === "critical") return "glm5";
-      return "glm47Flash";
-    }
+    if (lane === "strict-json") return "m27";
     if (lane === "coding") {
       if (routeIntent.adjustedComplexity === "simple" && hints.costMode === "strict") return "qwenCoderNext";
       if (modifiers.includes("needs_strict_schema") && routeIntent.adjustedComplexity !== "simple") return "glm5";
@@ -1004,7 +1008,7 @@ function createRuntime(config) {
     }
     if (modifiers.includes("multimodal")) return "kimiK25";
     if (routeIntent.categoryId === "high_stakes") return "sonnet";
-    if (modifiers.includes("needs_strict_schema")) return routeIntent.adjustedComplexity === "simple" ? "glm47Flash" : "glm5";
+    if (modifiers.includes("needs_strict_schema")) return "m27";
     if (routeIntent.actionClass === "casual_chat" || routeIntent.actionClass === "message_drafting") return "qwen35Flash";
     if (M27_WORKHORSE_CATEGORIES.has(routeIntent.categoryId)) return "m27";
     if (["retrieval", "summarization", "heartbeat"].includes(routeIntent.categoryId) && routeIntent.adjustedComplexity === "simple") {
@@ -1120,7 +1124,7 @@ function createRuntime(config) {
     if (score >= 4) return false;
     if (routeDecision.lane === "safe" || routeDecision.categoryId === "high_stakes") return true;
     if (score <= 1) return true;
-    if (routeDecision.lane === "strict-json" && score <= 3) return true;
+    if (routeDecision.lane === "strict-json") return false;
     if (routeDecision.lane === "research" && routeDecision.adjustedComplexity === "critical" && score <= 2) return true;
     return false;
   }
@@ -1133,16 +1137,13 @@ function createRuntime(config) {
     if (modelKey === "gpt5Nano") return "glm47Flash";
     if (modelKey === "qwen35Flash" || modelKey === "grok" || modelKey === "dsCoder" || modelKey === "qwenCoderNext") return "m27";
     if (modelKey === "m27") {
-      if (modifiers.includes("needs_strict_schema")) {
-        return routeDecision.adjustedComplexity === "simple" ? "glm47Flash" : "glm5";
-      }
       if (routeDecision.lane === "vision" || modifiers.includes("multimodal")) {
         return features.approxTokens >= 18000 ? "qwen35Plus" : "kimiK25";
       }
       if (routeDecision.lane === "research" || routeDecision.categoryId === "research") {
         return features.approxTokens >= 18000 || modifiers.includes("long_context") ? "qwen35Plus" : "kimiThinking";
       }
-      if (routeDecision.lane === "coding" && score <= 1) return "glm5";
+      if (routeDecision.lane === "coding" && score <= 1) return "sonnet";
       if (routeDecision.adjustedComplexity === "critical") return "sonnet";
       return null;
     }
@@ -1195,7 +1196,7 @@ function createRuntime(config) {
     if (normalized.toolChoice != null && (modelEntryForKey(candidate.key)?.supportedParameters || []).includes("tool_choice")) {
       payload.tool_choice = normalized.toolChoice;
     }
-    if (normalized.responseFormat && (modelEntryForKey(candidate.key)?.supportedParameters || []).includes("response_format")) {
+    if (isStrictSchemaFormat(normalized.responseFormat) && (modelEntryForKey(candidate.key)?.supportedParameters || []).includes("response_format")) {
       payload.response_format = normalized.responseFormat;
     }
     if (normalized.maxOutputTokens != null && (modelEntryForKey(candidate.key)?.supportedParameters || []).includes("max_tokens")) {
@@ -1222,7 +1223,7 @@ function createRuntime(config) {
     if (normalized.toolChoice != null && supports.has("tool_choice")) payload.tool_choice = normalized.toolChoice;
     if (normalized.reasoning && supports.has("reasoning")) payload.reasoning = normalized.reasoning;
     if (!options.minimal) payload.text = normalized.text || (normalized.responseFormat ? { format: normalized.responseFormat } : undefined);
-    if (normalized.responseFormat && supports.has("response_format")) payload.response_format = normalized.responseFormat;
+    if (isStrictSchemaFormat(normalized.responseFormat) && supports.has("response_format")) payload.response_format = normalized.responseFormat;
     if (normalized.maxOutputTokens != null && supports.has("max_tokens")) payload.max_output_tokens = normalized.maxOutputTokens;
     const plugins = buildPlugins(normalized, routeDecision, modifiers);
     if (plugins.length && !options.minimal) payload.plugins = plugins;
@@ -1278,6 +1279,44 @@ function createRuntime(config) {
       }
     }
     return { ok: true };
+  }
+
+  function validateToolCallArguments(toolCalls) {
+    if (!toolCalls.length) return { ok: true };
+    for (const toolCall of toolCalls) {
+      const toolName = String(toolCall?.function?.name || "tool");
+      const args = toolCall?.function?.arguments;
+      if (typeof args !== "string" || !args.trim()) {
+        return { ok: false, reason: `Tool call ${toolName} did not include JSON arguments.` };
+      }
+      const parsed = tryParseJson(args);
+      if (!parsed || typeof parsed !== "object") {
+        return { ok: false, reason: `Tool call ${toolName} arguments were not valid JSON.` };
+      }
+    }
+    return { ok: true };
+  }
+
+  function validateExecutionArtifacts(result, normalized, api, modifiers = []) {
+    const structureCheck = validateStructuredOutput(result, normalized);
+    if (!structureCheck.ok) return structureCheck;
+    if (modifiers.includes("needs_strict_schema")) {
+      const toolCallCheck = validateToolCallArguments(extractToolCalls(result, api));
+      if (!toolCallCheck.ok) return toolCallCheck;
+    }
+    return { ok: true };
+  }
+
+  function buildValidationRecoveryKeys(modelKey, routeDecision, modifiers = []) {
+    if (!modifiers.includes("needs_strict_schema")) return [];
+    if (routeDecision.label === "FORCED" || routeDecision.label === "PINNED") return [];
+    if (modelKey === "m27") return ["glm47Flash", "glm5", "gpt54Mini", "gpt54", "sonnet"];
+    if (modelKey === "glm47Flash") return ["glm5", "gpt54Mini", "gpt54", "sonnet"];
+    if (modelKey === "glm5") return ["gpt54Mini", "gpt54", "sonnet"];
+    if (modelKey === "gpt54Mini") return ["gpt54", "sonnet"];
+    if (modelKey === "gpt54") return ["sonnet"];
+    if (modelKey === "sonnet") return ["opus"];
+    return [];
   }
 
   function classifyToolPolicy(normalized, toolCalls, hints) {
@@ -1608,6 +1647,54 @@ function createRuntime(config) {
     let toolPolicy = { status: "allow", reason: "Streaming responses skip post-verification." };
 
     if (!normalized.stream && routeDecision.label !== "FORCED") {
+      const ensureValidatedResult = async () => {
+        const initialValidation = validateExecutionArtifacts(
+          finalResult,
+          normalized,
+          primaryApi === "responses" ? "responses" : "chat",
+          modifiers
+        );
+        if (initialValidation.ok) return;
+
+        const recoveryKeys = buildValidationRecoveryKeys(finalModelKey, routeDecision, modifiers);
+        if (!recoveryKeys.length) {
+          const error = new Error(initialValidation.reason);
+          error.status = 502;
+          error.code = "structured_output_invalid";
+          throw error;
+        }
+
+        const recoveryCandidates = buildCandidatesFromKeys(recoveryKeys, {
+          multimodal: modifiers.includes("multimodal")
+        });
+        let lastFailure = initialValidation;
+        for (const candidate of recoveryCandidates) {
+          const recovered = await executeSingleCandidate(candidate, primaryApi);
+          const validation = validateExecutionArtifacts(
+            recovered.result,
+            normalized,
+            recovered.api === "responses" ? "responses" : "chat",
+            modifiers
+          );
+          if (validation.ok) {
+            escalated = true;
+            finalResult = recovered.result;
+            finalModelId = candidate.modelId;
+            finalModelKey = candidate.key;
+            primaryApi = recovered.api;
+            return;
+          }
+          lastFailure = validation;
+        }
+
+        const error = new Error(lastFailure.reason || "Structured output validation failed.");
+        error.status = 502;
+        error.code = "structured_output_invalid";
+        throw error;
+      };
+
+      await ensureValidatedResult();
+
       const answerText =
         normalized.api === "responses" && primaryApi === "responses"
           ? extractResponsesOutputText(finalResult)
@@ -1625,6 +1712,7 @@ function createRuntime(config) {
         finalModelId = escalatedExecution.modelId;
         finalModelKey = escalatedExecution.key;
         primaryApi = escalatedExecution.api;
+        await ensureValidatedResult();
         const escalatedAnswerText =
           normalized.api === "responses" && primaryApi === "responses"
             ? extractResponsesOutputText(finalResult)
@@ -1632,13 +1720,6 @@ function createRuntime(config) {
         verifier = await runVerifier(normalized, routeDecision, modifiers, lastUserMessage, escalatedAnswerText);
       }
       lowConfidence = verifier.score <= (routeDecision.lane === "safe" ? 4 : 3);
-      const structureCheck = validateStructuredOutput(finalResult, normalized);
-      if (!structureCheck.ok) {
-        const error = new Error(structureCheck.reason);
-        error.status = 502;
-        error.code = "structured_output_invalid";
-        throw error;
-      }
       toolPolicy = classifyToolPolicy(normalized, extractToolCalls(finalResult, primaryApi === "responses" ? "responses" : "chat"), hints);
       if (toolPolicy.status === "blocked") {
         const error = new Error(toolPolicy.reason);

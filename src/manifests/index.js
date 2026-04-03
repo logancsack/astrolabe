@@ -760,9 +760,9 @@ const LANE_MANIFEST = {
   },
   "strict-json": {
     id: "lane_strict_json",
-    description: "Structured output, tool arguments, and schema-sensitive work.",
-    defaultCandidates: ["glm47Flash", "glm5", "gpt54Mini", "gpt54", "sonnet"],
-    fallbackCandidates: ["m27", "m25"]
+    description: "m27-first structured output lane with specialist recovery after concrete validation failure.",
+    defaultCandidates: ["m27", "glm47Flash", "glm5", "gpt54Mini", "gpt54", "sonnet"],
+    fallbackCandidates: ["m25"]
   },
   cheap: {
     id: "lane_cheap",

@@ -18,7 +18,7 @@ Astrolabe routes in four steps:
 | `coding` | `m27 -> qwenCoderNext -> glm5 -> sonnet -> opus` |
 | `research` | `qwen35Plus -> kimiThinking -> m27 -> grok420Beta -> sonnet -> opus` |
 | `vision` | `kimiK25 -> qwen35Plus -> gem25Pro -> gem31Pro -> sonnet` |
-| `strict-json` | `glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet` |
+| `strict-json` | `m27 -> glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet` |
 | `cheap` | `qwen35Flash -> grok -> m25 -> dsCoder -> gpt5Nano` |
 | `safe` | `sonnet -> opus -> gpt54` |
 
@@ -28,7 +28,8 @@ Astrolabe routes in four steps:
 - `m25` only appears as a strict-budget or fallback path.
 - Multimodal inputs promote the `vision` lane.
 - Tool presence alone does not promote `strict-json`.
-- Explicit structured output, schema-safe tool arguments, or repair flows promote the `strict-json` lane.
+- Explicit structured output and schema-sensitive work promote the `strict-json` lane.
+- Inside `strict-json`, `m27` still gets the first attempt and specialists only activate after concrete validation failure.
 - High-stakes or approval-sensitive work promotes the `safe` lane.
 - Untrusted content plus tools cannot stay on cheap weak tiers.
 
@@ -56,7 +57,7 @@ Important paths:
 
 - `m25 -> m27`
 - `qwen35Flash/grok/qwenCoderNext/dsCoder -> m27`
-- `m27 -> glm47Flash -> glm5` for strict JSON / schema work
+- `m27 -> glm47Flash -> glm5` for strict JSON / schema recovery after validation failure
 - `m27 -> qwen35Plus` or `kimiThinking` for research specialization
 - `m27 -> kimiK25` or `qwen35Plus` for multimodal specialization
 - `m27 -> sonnet -> opus` only on critical or safe-lane escalation

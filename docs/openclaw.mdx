@@ -58,6 +58,24 @@ That keeps the OpenClaw config stable even when you update the raw roster behind
 5. Astrolabe verifies the result, checks tool policy, and may escalate once.
 6. OpenClaw receives the final response plus `x-astrolabe-*` routing headers.
 
+## Cross-session continuity
+
+Astrolabe OSS is stateless. If you open a brand new OpenClaw session, Astrolabe will only see whatever OpenClaw sends in that new request.
+
+That means:
+
+- seeing an older transcript in the OpenClaw UI does not by itself make the model remember it
+- staying in the same session preserves conversational context because OpenClaw keeps sending prior turns
+- starting a different session requires OpenClaw memory, not Astrolabe state
+
+For cross-session recall in OpenClaw:
+
+- keep using the same session when you want short-term conversational continuity
+- enable the bundled `session-memory` hook so `/new` and `/reset` save session summaries into memory
+- configure OpenClaw memory/session retrieval so new sessions can load relevant prior memories, not just display old transcripts in the UI
+
+Astrolabe should remain stateless in OSS. The right place to solve cross-session memory is OpenClaw’s memory and session bootstrap layer.
+
 ## What to inspect in debugging
 
 When a turn behaves unexpectedly, inspect:

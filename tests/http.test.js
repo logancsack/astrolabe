@@ -732,6 +732,74 @@ test("m27 chat payload strips unsupported parameters before upstream dispatch", 
   }
 });
 
+test("strict-json requests try m27 first and only fall back to GLM after validation failure", { concurrency: false }, async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address();
+    const attemptedModels = [];
+    await withAxiosStub(async (url, payload) => {
+      if (isClassifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ category: "core_loop", complexity: "standard", confidence: 5 }) } }]
+          }
+        };
+      }
+      if (isVerifierPayload(payload)) {
+        return {
+          status: 200,
+          data: {
+            choices: [{ message: { content: JSON.stringify({ score: 5, reason: "confident" }) } }]
+          }
+        };
+      }
+      attemptedModels.push(payload.model);
+      if (payload.model === "minimax/minimax-m2.7") {
+        return {
+          status: 200,
+          data: {
+            id: "chatcmpl-invalid-json",
+            object: "chat.completion",
+            created: 1,
+            choices: [{ message: { role: "assistant", content: "not json" } }],
+            usage: { prompt_tokens: 18, completion_tokens: 4, total_tokens: 22 }
+          }
+        };
+      }
+      if (payload.model === "z-ai/glm-4.7-flash:exacto") {
+        return {
+          status: 200,
+          data: {
+            id: "chatcmpl-valid-json",
+            object: "chat.completion",
+            created: 1,
+            choices: [{ message: { role: "assistant", content: "{\"ok\":true}" } }],
+            usage: { prompt_tokens: 12, completion_tokens: 6, total_tokens: 18 }
+          }
+        };
+      }
+      throw new Error(`Unexpected model ${payload.model}`);
+    }, async () => {
+      const response = await requestJson(port, {
+        method: "POST",
+        path: "/v1/chat/completions",
+        body: {
+          stream: false,
+          response_format: { type: "json_object" },
+          messages: [{ role: "user", content: "Return valid JSON only." }]
+        }
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(attemptedModels.slice(0, 2), ["minimax/minimax-m2.7", "z-ai/glm-4.7-flash:exacto"]);
+      assert.equal(response.headers["x-astrolabe-initial-model"], "minimax/minimax-m2.7");
+      assert.equal(response.headers["x-astrolabe-final-model"], "z-ai/glm-4.7-flash");
+    });
+  } finally {
+    server.close();
+  }
+});
+
 test("responses URL allowlists are enforced", { concurrency: false }, async () => {
   const { app: guardedApp } = loadServerFresh({
     ASTROLABE_RESPONSES_IMAGES_URL_ALLOWLIST: "allowed.example"
