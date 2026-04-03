@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible problem in Astrolabe
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly and include the expected behavior.
+      placeholder: Astrolabe routed a low-risk chat request to a premium model instead of m27 or cheap lane.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How do we reproduce it?
+      description: Include the request shape, relevant headers or metadata, and any steps needed to trigger the issue.
+      placeholder: |
+        1. Start Astrolabe
+        2. Send this request...
+        3. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, headers, or screenshots
+      description: Paste sanitized logs or response headers like x-astrolabe-lane and x-astrolabe-final-model.
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include deployment target, Node version, and anything else relevant.
+      placeholder: Railway, Node 20, OpenRouter-backed, Responses API
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed secrets and personal data from this report.
+          required: true
+        - label: I checked for existing issues before filing this one.
+          required: true
