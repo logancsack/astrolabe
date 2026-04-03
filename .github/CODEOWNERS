@@ -1,0 +1,10 @@
+* @logancsack
+
+/.github/ @logancsack
+/server.js @logancsack
+/src/ @logancsack
+/src/runtime.js @logancsack
+/src/manifests/index.js @logancsack
+/src/config.js @logancsack
+/scripts/validate-model-manifest.js @logancsack
+/docs/api-reference/ @logancsack

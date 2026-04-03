@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an improvement for Astrolabe
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the user or maintainer pain point first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you want and why it would help.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note any workarounds or other approaches you considered.
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Routing, safety, or operational impact
+      description: Call out effects on model routing, cost, security, or deployment if relevant.

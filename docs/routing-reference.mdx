@@ -10,17 +10,29 @@ Astrolabe routes in four steps:
 3. choose a lane
 4. select candidates from the static manifest
 
+Cheap low-risk turns can now skip both the model classifier and the verifier. Active OpenClaw work sessions can also reuse the last successful in-lane model when sticky execution metadata is present.
+
 ## Lane defaults
 
 | Lane | Default candidate order |
 | --- | --- |
 | `auto` | `m27 -> qwen35Plus -> kimiThinking -> kimiK25 -> sonnet -> opus` |
 | `coding` | `m27 -> qwenCoderNext -> glm5 -> sonnet -> opus` |
-| `research` | `qwen35Plus -> kimiThinking -> m27 -> grok420Beta -> sonnet -> opus` |
-| `vision` | `kimiK25 -> qwen35Plus -> gem25Pro -> gem31Pro -> sonnet` |
+| `research` | `qwen35Plus -> kimiThinking -> m27 -> sonnet -> opus` |
+| `vision` | `kimiK25 -> qwen35Plus -> gem25Pro -> sonnet` |
 | `strict-json` | `m27 -> glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet` |
 | `cheap` | `qwen35Flash -> grok -> m25 -> dsCoder -> gpt5Nano` |
-| `safe` | `sonnet -> opus -> gpt54` |
+| `safe` | `sonnet -> opus` |
+
+Experimental branches exist behind an opt-in preview gate:
+
+- `research`: `grok420`, `gem31Pro`
+- `vision`: `gem31Pro`, `gem31FlashLite`
+
+Those candidates only appear when both of these are true:
+
+- `ASTROLABE_ALLOW_PREVIEW_MODELS=true`
+- `metadata.astrolabe.allow_preview=true`
 
 ## Key routing rules
 
@@ -32,6 +44,7 @@ Astrolabe routes in four steps:
 - Inside `strict-json`, `m27` still gets the first attempt and specialists only activate after concrete validation failure.
 - High-stakes or approval-sensitive work promotes the `safe` lane.
 - Untrusted content plus tools cannot stay on cheap weak tiers.
+- Sticky execution can keep the current workhorse stable across active OpenClaw sessions.
 
 ## Profiles and guardrails
 
@@ -48,6 +61,13 @@ Astrolabe routes in four steps:
 - `budget`
 - `balanced`
 - `quality`
+
+Additional router controls:
+
+- `ASTROLABE_ALLOW_PREVIEW_MODELS`
+- `ASTROLABE_STICKY_EXECUTOR_ENABLED`
+- `ASTROLABE_SKIP_LOW_RISK_VERIFIER`
+- `ASTROLABE_SKIP_LOW_RISK_CLASSIFIER`
 
 ## Escalation
 
@@ -66,7 +86,10 @@ Important paths:
 
 - High-stakes detection can require explicit confirmation.
 - Tool calls are inspected before Astrolabe returns them.
+- Tool governance is capability-driven first and name-inferred only as a fallback.
 - Read-only tool profiles can block mutating tool calls.
+- `external_comms`, `credential_access`, `remote_write`, and `financial_or_destructive` actions require approval.
+- `untrusted_content` blocks those dangerous capabilities outright and forces at least `m27`.
 - Responses file and image URLs can be allowlisted.
 
 ## Transparency
@@ -84,3 +107,7 @@ And inspect response headers:
 - `x-astrolabe-initial-model`
 - `x-astrolabe-final-model`
 - `x-astrolabe-route-label`
+- `x-astrolabe-sticky-applied`
+- `x-astrolabe-sticky-reason`
+- `x-astrolabe-verification-skipped`
+- `x-astrolabe-transport-fallback-only`

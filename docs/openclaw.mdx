@@ -34,6 +34,7 @@ Astrolabe adds:
 - chat-completions compatibility for legacy clients
 - provider failover through OpenRouter
 - tool-policy and untrusted-content guardrails
+- sticky executor continuity across active sessions when OpenClaw sends the right metadata
 
 ## Suggested model choices for OpenClaw
 
@@ -57,6 +58,36 @@ That keeps the OpenClaw config stable even when you update the raw roster behind
 4. Astrolabe executes against OpenRouter.
 5. Astrolabe verifies the result, checks tool policy, and may escalate once.
 6. OpenClaw receives the final response plus `x-astrolabe-*` routing headers.
+
+## Recommended metadata hints
+
+Astrolabe stays stateless, so the best OpenClaw integration sends routing hints on each turn under `metadata.astrolabe`:
+
+- `last_model`
+- `last_lane`
+- `session_phase`
+- `sticky_executor`
+- `tool_capabilities`
+- `allow_preview`
+
+Recommended defaults:
+
+- `session_phase=active` while the agent is in a real work loop
+- `sticky_executor=true` unless you intentionally want Astrolabe to re-pick aggressively
+- `allow_preview=false` unless you explicitly want preview research or vision branches
+
+`tool_capabilities` should map tool names to capability labels like:
+
+- `read_local`
+- `read_remote`
+- `workspace_write`
+- `remote_write`
+- `external_comms`
+- `credential_access`
+- `financial_or_destructive`
+- `code_exec`
+
+Astrolabe can infer some of this from tool names, but explicit metadata gives you a much safer policy surface.
 
 ## Cross-session continuity
 
@@ -86,6 +117,10 @@ When a turn behaves unexpectedly, inspect:
 - `x-astrolabe-final-model`
 - `x-astrolabe-route-label`
 - `x-astrolabe-escalated`
+- `x-astrolabe-sticky-applied`
+- `x-astrolabe-sticky-reason`
+- `x-astrolabe-verification-skipped`
+- `x-astrolabe-transport-fallback-only`
 
 For JSON responses, also inspect the inline `astrolabe` metadata block.
 
