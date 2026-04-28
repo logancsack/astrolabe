@@ -166,10 +166,13 @@ test("GET /v1/models?view=raw returns the static checked-in roster", async () =>
     const response = await requestJson(port, { path: "/v1/models?view=raw" });
     assert.equal(response.status, 200);
     assert.ok(response.body.data.some((model) => model.id === "minimax/minimax-m2.7"));
-    assert.ok(response.body.data.some((model) => model.id === "openai/gpt-5-nano"));
+    assert.ok(response.body.data.some((model) => model.id === "deepseek/deepseek-v4-pro"));
+    assert.ok(response.body.data.some((model) => model.id === "openai/gpt-5.5"));
     assert.ok(Array.isArray(response.body.buckets.defaults));
     assert.ok(Array.isArray(response.body.buckets.raw_only));
     assert.ok(Array.isArray(response.body.buckets.experimental));
+    assert.ok(response.body.buckets.defaults.includes("deepseek/deepseek-v4-pro"));
+    assert.ok(response.body.buckets.raw_only.includes("openai/gpt-5-nano"));
   } finally {
     server.close();
   }
@@ -183,7 +186,7 @@ test("GET /v1/lanes exposes lane manifests", async () => {
     assert.equal(response.status, 200);
     const codingLane = response.body.data.find((lane) => lane.lane === "coding");
     assert.ok(codingLane);
-    assert.equal(codingLane.default_candidates[0].id, "minimax/minimax-m2.7");
+    assert.equal(codingLane.default_candidates[0].id, "deepseek/deepseek-v4-pro");
   } finally {
     server.close();
   }
@@ -377,8 +380,8 @@ test("non-stream chat responses include routing headers and astrolabe metadata",
       assert.equal(response.status, 200);
       assert.equal(response.headers["x-astrolabe-category"], "retrieval");
       assert.equal(response.headers["x-astrolabe-action-class"], "casual_chat");
-      assert.equal(response.headers["x-astrolabe-initial-model"], "qwen/qwen3.5-flash-02-23");
-      assert.equal(response.headers["x-astrolabe-final-model"], "qwen/qwen3.5-flash-02-23");
+      assert.equal(response.headers["x-astrolabe-initial-model"], "google/gemma-4-31b-it");
+      assert.equal(response.headers["x-astrolabe-final-model"], "google/gemma-4-31b-it");
       assert.equal(response.body.astrolabe.category, "retrieval");
       assert.equal(response.body.choices[0].message.content, "Sunny and 72F.");
     });
@@ -387,7 +390,7 @@ test("non-stream chat responses include routing headers and astrolabe metadata",
   }
 });
 
-test("planning requests route to m27 by default", { concurrency: false }, async () => {
+test("planning requests route to DeepSeek V4 Pro by default", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
@@ -429,8 +432,8 @@ test("planning requests route to m27 by default", { concurrency: false }, async 
       });
       assert.equal(response.status, 200);
       assert.equal(response.headers["x-astrolabe-category"], "planning");
-      assert.equal(response.headers["x-astrolabe-initial-model"], "minimax/minimax-m2.7");
-      assert.equal(response.headers["x-astrolabe-final-model"], "minimax/minimax-m2.7");
+      assert.equal(response.headers["x-astrolabe-initial-model"], "deepseek/deepseek-v4-pro");
+      assert.equal(response.headers["x-astrolabe-final-model"], "deepseek/deepseek-v4-pro");
     });
   } finally {
     server.close();
@@ -467,7 +470,7 @@ test("responses endpoint prefers OpenRouter responses and returns response objec
             id: "resp_123",
             object: "response",
             created: 1,
-            model: "moonshotai/kimi-k2-thinking",
+            model: "qwen/qwen3.6-plus",
             output: [
               {
                 type: "message",
@@ -587,7 +590,7 @@ test("multimodal requests retry multimodal-capable lane candidates first", { con
         };
       }
       attempts.push(payload.model);
-      if (payload.model === "moonshotai/kimi-k2.5") {
+      if (payload.model === "qwen/qwen3.6-plus") {
         return {
           status: 404,
           data: {
@@ -598,7 +601,7 @@ test("multimodal requests retry multimodal-capable lane candidates first", { con
           }
         };
       }
-      if (payload.model === "qwen/qwen3.5-plus-02-15") {
+      if (payload.model === "moonshotai/kimi-k2.6") {
         return {
           status: 200,
           data: {
@@ -629,8 +632,8 @@ test("multimodal requests retry multimodal-capable lane candidates first", { con
         }
       });
       assert.equal(response.status, 200);
-      assert.deepEqual(attempts.slice(0, 3), ["moonshotai/kimi-k2.5", "moonshotai/kimi-k2.5", "qwen/qwen3.5-plus-02-15"]);
-      assert.equal(response.headers["x-astrolabe-final-model"], "qwen/qwen3.5-plus-02-15");
+      assert.deepEqual(attempts.slice(0, 3), ["qwen/qwen3.6-plus", "qwen/qwen3.6-plus", "moonshotai/kimi-k2.6"]);
+      assert.equal(response.headers["x-astrolabe-final-model"], "moonshotai/kimi-k2.6");
     });
   } finally {
     server.close();
@@ -677,7 +680,7 @@ test("forced model bypasses classifier and verifier work", { concurrency: false 
   }
 });
 
-test("m27 chat payload strips unsupported parameters before upstream dispatch", { concurrency: false }, async () => {
+test("DeepSeek V4 Pro chat payload strips unsupported parameters before upstream dispatch", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
@@ -723,18 +726,18 @@ test("m27 chat payload strips unsupported parameters before upstream dispatch", 
         }
       });
       assert.equal(response.status, 200);
-      const m27Payload = upstreamPayloads.find((payload) => payload.model === "minimax/minimax-m2.7");
-      assert.ok(m27Payload);
-      assert.equal("parallel_tool_calls" in m27Payload, false);
-      assert.equal("verbosity" in m27Payload, false);
-      assert.equal(m27Payload.temperature, 0.2);
+      const deepseekPayload = upstreamPayloads.find((payload) => payload.model === "deepseek/deepseek-v4-pro");
+      assert.ok(deepseekPayload);
+      assert.equal("parallel_tool_calls" in deepseekPayload, false);
+      assert.equal("verbosity" in deepseekPayload, false);
+      assert.equal(deepseekPayload.temperature, 0.2);
     });
   } finally {
     server.close();
   }
 });
 
-test("strict-json requests try m27 first and only fall back to GLM after validation failure", { concurrency: false }, async () => {
+test("strict-json requests try GPT-5.4 Nano first and recover through GLM 5.1", { concurrency: false }, async () => {
   const server = app.listen(0);
   try {
     const { port } = server.address();
@@ -757,7 +760,7 @@ test("strict-json requests try m27 first and only fall back to GLM after validat
         };
       }
       attemptedModels.push(payload.model);
-      if (payload.model === "minimax/minimax-m2.7") {
+      if (payload.model === "openai/gpt-5.4-nano") {
         return {
           status: 200,
           data: {
@@ -769,7 +772,7 @@ test("strict-json requests try m27 first and only fall back to GLM after validat
           }
         };
       }
-      if (payload.model === "z-ai/glm-4.7-flash:exacto") {
+      if (payload.model === "z-ai/glm-5.1") {
         return {
           status: 200,
           data: {
@@ -793,9 +796,9 @@ test("strict-json requests try m27 first and only fall back to GLM after validat
         }
       });
       assert.equal(response.status, 200);
-      assert.deepEqual(attemptedModels.slice(0, 2), ["minimax/minimax-m2.7", "z-ai/glm-4.7-flash:exacto"]);
-      assert.equal(response.headers["x-astrolabe-initial-model"], "minimax/minimax-m2.7");
-      assert.equal(response.headers["x-astrolabe-final-model"], "z-ai/glm-4.7-flash");
+      assert.deepEqual(attemptedModels.slice(0, 2), ["openai/gpt-5.4-nano", "z-ai/glm-5.1"]);
+      assert.equal(response.headers["x-astrolabe-initial-model"], "openai/gpt-5.4-nano");
+      assert.equal(response.headers["x-astrolabe-final-model"], "z-ai/glm-5.1");
     });
   } finally {
     server.close();

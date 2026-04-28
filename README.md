@@ -32,8 +32,8 @@ That is now the expected workflow for all future changes.
 
 - `POST /v1/responses` is now the primary API.
 - `POST /v1/chat/completions` remains as a compatibility adapter.
-- `m27` is now the default workhorse.
-- `m25` is now strict-budget, overflow, and fallback only.
+- `deepseekV4Pro` is now the first serious-work default for `auto` and `coding`.
+- Older rejected models stay raw-only/manual-pin for one transition release.
 - Virtual models are first-class:
   - `astrolabe/auto`
   - `astrolabe/coding`
@@ -76,56 +76,54 @@ This repo is for **Astrolabe OSS** only:
 
 Core production roster:
 
+- `deepseekV4Pro` -> `deepseek/deepseek-v4-pro`
+- `deepseekV4Flash` -> `deepseek/deepseek-v4-flash`
 - `m27` -> `minimax/minimax-m2.7`
-- `m25` -> `minimax/minimax-m2.5`
-- `kimiK25` -> `moonshotai/kimi-k2.5`
-- `kimiThinking` -> `moonshotai/kimi-k2-thinking`
-- `glm47Flash` -> `z-ai/glm-4.7-flash`
-- `glm5` -> `z-ai/glm-5`
+- `mimoV25Pro` -> `xiaomi/mimo-v2.5-pro`
+- `kimiK26` -> `moonshotai/kimi-k2.6`
+- `glm51` -> `z-ai/glm-5.1`
 - `grok` -> `x-ai/grok-4.1-fast`
-- `dsCoder` -> `deepseek/deepseek-v3.2`
-- `qwen35Flash` -> `qwen/qwen3.5-flash-02-23`
-- `qwen35Plus` -> `qwen/qwen3.5-plus-02-15`
-- `qwenCoderNext` -> `qwen/qwen3-coder-next`
+- `grok420` -> `x-ai/grok-4.20`
+- `qwen36Plus` -> `qwen/qwen3.6-plus`
+- `gemma431b` -> `google/gemma-4-31b-it`
+- `mistralSmall4` -> `mistralai/mistral-small-2603`
 - `gpt54` -> `openai/gpt-5.4`
 - `gpt54Mini` -> `openai/gpt-5.4-mini`
-- `gpt5Nano` -> `openai/gpt-5-nano`
 - `gpt54Nano` -> `openai/gpt-5.4-nano`
-- `gem25FlashLite` -> `google/gemini-2.5-flash-lite`
-- `gem31FlashLite` -> `google/gemini-3.1-flash-lite-preview`
-- `gem25Pro` -> `google/gemini-2.5-pro`
-- `gem31Pro` -> `google/gemini-3.1-pro-preview`
-- `grok420` -> `x-ai/grok-4.20`
+- `gpt55` -> `openai/gpt-5.5`
 - `sonnet` -> `anthropic/claude-sonnet-4.6`
-- `opus` -> `anthropic/claude-opus-4.6`
-- `mimoV2Flash` -> `xiaomi/mimo-v2-flash` (raw eval model)
-- `mistralSmall4` -> `mistralai/mistral-small-2603` (raw eval model)
+- `opus47` -> `anthropic/claude-opus-4.7`
+
+Raw-only transition models remain requestable by raw key or model ID for one release, but are removed from virtual lane defaults and fallbacks: `gpt5Nano`, `m25`, `kimiK25`, `kimiThinking`, `glm5`, `qwen35Plus`, `qwen35Flash`, `qwenCoderNext`, `gem25Pro`, `gem25FlashLite`, `opus`, plus older raw pins such as `o3`, `o4Mini`, `gpt54Pro`, and `gpt53Codex` if present in a downstream deployment.
+
+Preview/evaluation models remain gated behind preview routing: `gem31Pro`, `gem31ProTools`, `mimoV25`, and `glm5vTurbo`.
 
 Compatibility aliases:
 
-- `nano` -> `gpt5Nano`
+- `nano` -> `gpt54Nano`
 - `mini` -> `gpt54Mini`
 - `gemFlash` -> `gem25FlashLite`
+- `grok41Fast` -> `grok`
 
 ## Routing defaults
 
-- `astrolabe/auto`: category-driven with `m27` as the main non-trivial default
-- `astrolabe/coding`: `m27 -> qwenCoderNext -> glm5 -> sonnet -> opus`
-- `astrolabe/research`: `qwen35Plus -> kimiThinking -> m27 -> sonnet -> opus`
-- `astrolabe/vision`: `kimiK25 -> qwen35Plus -> gem25Pro -> sonnet`
-- `astrolabe/strict-json`: `m27 -> glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet`
-- `astrolabe/cheap`: `qwen35Flash -> grok -> m25 -> dsCoder -> gpt5Nano`
-- `astrolabe/safe`: `sonnet -> opus`
+- `astrolabe/auto`: `deepseekV4Pro -> m27 -> mimoV25Pro -> qwen36Plus -> kimiK26 -> sonnet`
+- `astrolabe/coding`: `deepseekV4Pro -> m27 -> mimoV25Pro -> kimiK26 -> glm51 -> sonnet`
+- `astrolabe/research`: `qwen36Plus -> mimoV25Pro -> m27 -> deepseekV4Pro -> grok420 -> gpt54 -> opus47 -> gpt55`
+- `astrolabe/vision`: `qwen36Plus -> kimiK26 -> gemma431b -> mistralSmall4 -> sonnet`
+- `astrolabe/strict-json`: `gpt54Nano -> glm51 -> deepseekV4Flash -> m27 -> gpt54Mini -> sonnet`
+- `astrolabe/cheap`: `gemma431b -> deepseekV4Flash -> grok -> mistralSmall4 -> gpt54Nano`
+- `astrolabe/safe`: `sonnet -> opus47 -> gpt55 -> gpt54`
 
 Policy rules worth knowing:
 
-- `m27` is the workhorse for serious OpenClaw turns.
-- `m25` is only used for strict-budget, fallback, or overflow scenarios.
+- `deepseekV4Pro` is the first serious-work default for normal `auto` and `coding` turns.
+- `m27` remains the conservative fallback and safety-floor workhorse.
 - Preview and experimental models are opt-in. They only join routing when both `ASTROLABE_ALLOW_PREVIEW_MODELS=true` and `metadata.astrolabe.allow_preview=true`.
 - Multimodal turns promote to the vision lane.
 - Tool availability alone does not imply `strict-json`.
-- Explicit structured output and schema-sensitive work still use the `strict-json` lane, but `m27` gets the first attempt.
-- `glm47Flash`, `glm5`, and `gpt54Mini` are validation-recovery specialists, not first-pass defaults.
+- Explicit structured output and schema-sensitive work use the `strict-json` lane, starting with `gpt54Nano` and recovering through `glm51`, `deepseekV4Flash`, `m27`, `gpt54Mini`, and `sonnet`.
+- `glm47Flash` remains a raw/transition schema fallback only.
 - Tool-enabled requests with untrusted content cannot stay on weak cheap tiers.
 - Dangerous remote-write, external-comms, credential, and destructive tool calls are capability-gated before Astrolabe returns them.
 - Active OpenClaw sessions can reuse the last successful in-lane model when sticky execution metadata is present.
@@ -142,7 +140,7 @@ Public endpoints:
 
 `GET /v1/models` returns virtual models by default.
 
-Use `GET /v1/models?view=raw` to inspect the underlying static roster.
+Use `GET /v1/models?view=raw` to inspect the underlying static roster. Its `buckets.defaults` list contains the active roster, `buckets.raw_only` contains manual-pin and transition models, and `buckets.experimental` contains preview/evaluation entries.
 
 ## Quick start
 

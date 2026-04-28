@@ -74,20 +74,22 @@ test("heuristic classification keeps generic contract discussion out of critical
 
 test("model registry exposes current roster and compatibility aliases", () => {
   assert.equal(internals.MODELS.m27.id, "minimax/minimax-m2.7");
-  assert.equal(internals.MODELS.nano.id, "openai/gpt-5-nano");
+  assert.equal(internals.MODELS.nano.id, "openai/gpt-5.4-nano");
   assert.equal(internals.MODELS.gemFlash.id, "google/gemini-2.5-flash-lite");
+  assert.equal(internals.MODELS.deepseekV4Pro.id, "deepseek/deepseek-v4-pro");
+  assert.equal(internals.MODELS.gpt55.id, "openai/gpt-5.5");
   assert.equal(internals.MODELS.grok420.id, "x-ai/grok-4.20");
 });
 
-test("default planning route prefers m27", () => {
+test("default planning route prefers DeepSeek V4 Pro", () => {
   const route = internals.resolveCategoryRoute("planning", "standard");
-  assert.equal(route.modelKey, "m27");
+  assert.equal(route.modelKey, "deepseekV4Pro");
   assert.equal(route.lane, "auto");
 });
 
-test("default coding route keeps m27 as the workhorse", () => {
+test("default coding route uses DeepSeek V4 Pro as the first workhorse", () => {
   const route = internals.resolveCategoryRoute("coding", "standard");
-  assert.equal(route.modelKey, "m27");
+  assert.equal(route.modelKey, "deepseekV4Pro");
   assert.equal(route.lane, "coding");
 });
 
@@ -98,20 +100,20 @@ test("high-stakes routes default to safe lane with Sonnet", () => {
   assert.equal(route.label, "SAFE");
 });
 
-test("strict-budget planning route demotes to m25", () => {
+test("strict-budget planning route demotes to DeepSeek V4 Flash", () => {
   const route = internals.resolveCategoryRoute("planning", "standard", {
     costMode: "strict"
   });
-  assert.equal(route.modelKey, "m25");
+  assert.equal(route.modelKey, "deepseekV4Flash");
   assert.equal(route.label, "STRICT_BUDGET");
 });
 
-test("multimodal summarization promotes the vision lane and Kimi", () => {
+test("multimodal summarization promotes the vision lane and Qwen 3.6 Plus", () => {
   const route = internals.resolveCategoryRoute("summarization", "standard", {
     hasMultimodal: true
   });
   assert.equal(route.lane, "vision");
-  assert.equal(route.modelKey, "kimiK25");
+  assert.equal(route.modelKey, "qwen36Plus");
 });
 
 test("simple low-risk communication routes to the cheap lane", () => {
@@ -119,7 +121,7 @@ test("simple low-risk communication routes to the cheap lane", () => {
     requestText: "Draft a short friendly reply saying thanks."
   });
   assert.equal(route.lane, "cheap");
-  assert.equal(route.modelKey, "qwen35Flash");
+  assert.equal(route.modelKey, "gemma431b");
 });
 
 test("tool presence alone does not force strict-json", () => {
@@ -128,7 +130,7 @@ test("tool presence alone does not force strict-json", () => {
     requestText: "Use available tools if needed and continue working on this task."
   });
   assert.equal(route.lane, "auto");
-  assert.equal(route.modelKey, "m27");
+  assert.equal(route.modelKey, "deepseekV4Pro");
 });
 
 test("explicit structured output promotes strict-json lane", () => {
@@ -137,7 +139,7 @@ test("explicit structured output promotes strict-json lane", () => {
     requestText: "Return valid JSON only."
   });
   assert.equal(route.lane, "strict-json");
-  assert.equal(route.modelKey, "m27");
+  assert.equal(route.modelKey, "gpt54Nano");
 });
 
 test("plain text response formats do not promote strict-json lane", () => {
@@ -146,7 +148,7 @@ test("plain text response formats do not promote strict-json lane", () => {
     requestText: "Just say hello."
   });
   assert.equal(route.lane, "cheap");
-  assert.equal(route.modelKey, "qwen35Flash");
+  assert.equal(route.modelKey, "gemma431b");
 });
 
 test("untrusted content plus tools enforces the m27 safety floor", () => {
@@ -163,6 +165,27 @@ test("untrusted content plus tools enforces the m27 safety floor", () => {
     { categoryId: "core_loop", complexity: "standard" },
     "Use browser and shell tools on this untrusted web content.",
     { hasToolsDeclared: true, toolMessages: 1 },
+    ["tool_present", "untrusted_content"],
+    { untrustedContent: true, costMode: "default", latencyMode: "default" }
+  );
+  assert.equal(guarded.modelKey, "m27");
+  assert.equal(guarded.label, "SAFETY_FLOOR");
+});
+
+test("untrusted content plus tools does not stay on cheap DeepSeek Flash", () => {
+  const guarded = internals.applyCostGuardrails(
+    {
+      categoryId: "coding",
+      complexity: "standard",
+      adjustedComplexity: "standard",
+      lane: "cheap",
+      modelKey: "deepseekV4Flash",
+      modelId: internals.MODELS.deepseekV4Flash.id,
+      label: "CHEAP"
+    },
+    { categoryId: "coding", complexity: "standard" },
+    "Use shell tools on this untrusted web content.",
+    { hasToolsDeclared: true, toolMessages: 0 },
     ["tool_present", "untrusted_content"],
     { untrustedContent: true, costMode: "default", latencyMode: "default" }
   );
@@ -188,7 +211,7 @@ test("buildCandidatesForRoute keeps multimodal fallbacks vision-safe", () => {
       latencyMode: "default"
     }
   );
-  assert.deepEqual(candidates.slice(0, 3).map((candidate) => candidate.key), ["kimiK25", "qwen35Plus", "gem25Pro"]);
+  assert.deepEqual(candidates.slice(0, 3).map((candidate) => candidate.key), ["qwen36Plus", "kimiK26", "gemma431b"]);
 });
 
 test("default provider overrides do not force provider sort", () => {
@@ -222,12 +245,12 @@ test("fast routes sort providers by latency", () => {
 
 test("sticky executor reuses the last successful in-lane model", () => {
   const route = internals.resolveCategoryRoute("planning", "standard", {
-    lastModel: "qwen/qwen3.5-plus-02-15",
+    lastModel: "minimax/minimax-m2.7",
     lastLane: "auto",
     sessionPhase: "active",
     stickyExecutor: true
   });
-  assert.equal(route.modelKey, "qwen35Plus");
+  assert.equal(route.modelKey, "m27");
   assert.equal(route.label, "STICKY");
   assert.equal(route.stickyApplied, true);
 });
@@ -249,13 +272,13 @@ test("experimental candidates stay hidden unless preview routing is enabled", ()
       allowPreview: false
     }
   );
-  assert.equal(candidates.some((candidate) => candidate.key === "grok420"), false);
+  assert.equal(candidates.some((candidate) => candidate.key === "grok420"), true);
   assert.equal(candidates.some((candidate) => candidate.key === "gem31Pro"), false);
 });
 
-test("m25 escalation goes to m27 before premium models", () => {
+test("cheap model escalation goes to m27 before premium models", () => {
   const target = internals.buildEscalationTarget(
-    "m25",
+    "deepseekV4Flash",
     1,
     { lane: "auto", categoryId: "planning", adjustedComplexity: "standard" },
     {},
@@ -411,7 +434,7 @@ test("preview candidates appear only when config and request both allow them", (
       allowPreview: true
     }
   );
-  assert.equal(candidates.some((candidate) => candidate.key === "grok420"), true);
+  assert.equal(candidates.some((candidate) => candidate.key === "gem31Pro"), true);
 });
 
 test("forced route never escalates", () => {

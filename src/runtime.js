@@ -50,6 +50,18 @@ const TOOL_BLOCK_REGEX = /\b(shell|exec|system|browser|web_fetch|web-search|http
 const URL_SCHEME_REGEX = /^https?:\/\//i;
 const LOW_RISK_CATEGORIES = new Set(["heartbeat", "retrieval", "summarization", "creative", "communication"]);
 const M27_WORKHORSE_CATEGORIES = new Set(["core_loop", "planning", "orchestration", "coding", "research", "reflection"]);
+const WEAK_CHEAP_MODEL_KEYS = new Set([
+  "gemma431b",
+  "mistralSmall4",
+  "grok",
+  "gpt54Nano",
+  "deepseekV4Flash",
+  "gpt5Nano",
+  "m25",
+  "qwen35Flash",
+  "qwenCoderNext",
+  "dsCoder"
+]);
 const STICKY_BREAK_LANES = new Set(["safe", "vision", "strict-json"]);
 const SAFE_TOOL_CAPABILITIES = new Set(["read_local", "read_remote"]);
 const APPROVAL_TOOL_CAPABILITIES = new Set([
@@ -1097,36 +1109,34 @@ function createRuntime(config) {
     if (requested.type === "raw") return requested.modelKey;
     if (config.FORCE_MODEL_ID) return resolveModelKeyFromId(config.FORCE_MODEL_ID) || null;
     if (lane === "safe") return "sonnet";
-    if (lane === "vision") return features.approxTokens >= 18000 ? "qwen35Plus" : "kimiK25";
+    if (lane === "vision") return "qwen36Plus";
     if (lane === "research") {
-      if (features.approxTokens >= 18000 || modifiers.includes("long_context") || features.hasMultimodal) return "qwen35Plus";
-      if (routeIntent.adjustedComplexity === "complex" || routeIntent.adjustedComplexity === "critical") return "kimiThinking";
-      return "m27";
+      return "qwen36Plus";
     }
-    if (lane === "strict-json") return "m27";
+    if (lane === "strict-json") return "gpt54Nano";
     if (lane === "coding") {
-      if (routeIntent.adjustedComplexity === "simple" && hints.costMode === "strict") return "qwenCoderNext";
-      if (modifiers.includes("needs_strict_schema") && routeIntent.adjustedComplexity !== "simple") return "glm5";
-      return "m27";
+      if (routeIntent.adjustedComplexity === "simple" && hints.costMode === "strict") return "deepseekV4Flash";
+      if (modifiers.includes("needs_strict_schema") && routeIntent.adjustedComplexity !== "simple") return "glm51";
+      return "deepseekV4Pro";
     }
     if (lane === "cheap") {
-      if (routeIntent.categoryId === "coding") return "qwenCoderNext";
-      if (modifiers.includes("tool_present") || modifiers.includes("long_context")) return "grok";
+      if (routeIntent.categoryId === "coding") return "deepseekV4Flash";
+      if (modifiers.includes("tool_present") || modifiers.includes("long_context")) return "deepseekV4Flash";
       if (["heartbeat", "retrieval", "summarization"].includes(routeIntent.categoryId) && !features.hasToolsDeclared) {
-        return "qwen35Flash";
+        return "gemma431b";
       }
-      return routeIntent.actionClass === "message_drafting" ? "grok" : "qwen35Flash";
+      return "gemma431b";
     }
-    if (modifiers.includes("multimodal")) return "kimiK25";
+    if (modifiers.includes("multimodal")) return "qwen36Plus";
     if (routeIntent.categoryId === "high_stakes") return "sonnet";
-    if (modifiers.includes("needs_strict_schema")) return "m27";
-    if (routeIntent.actionClass === "casual_chat" || routeIntent.actionClass === "message_drafting") return "qwen35Flash";
-    if (M27_WORKHORSE_CATEGORIES.has(routeIntent.categoryId)) return "m27";
+    if (modifiers.includes("needs_strict_schema")) return "gpt54Nano";
+    if (routeIntent.actionClass === "casual_chat" || routeIntent.actionClass === "message_drafting") return "gemma431b";
+    if (M27_WORKHORSE_CATEGORIES.has(routeIntent.categoryId)) return "deepseekV4Pro";
     if (["retrieval", "summarization", "heartbeat"].includes(routeIntent.categoryId) && routeIntent.adjustedComplexity === "simple") {
-      return "qwen35Flash";
+      return "gemma431b";
     }
-    if (routeIntent.adjustedComplexity === "simple") return "qwen35Flash";
-    return "m27";
+    if (routeIntent.adjustedComplexity === "simple") return "gemma431b";
+    return "deepseekV4Pro";
   }
 
   function applyCostGuardrails(routeDecision, routeIntent, requestText, features, modifiers = [], hints = {}) {
@@ -1134,26 +1144,31 @@ function createRuntime(config) {
     const guarded = { ...routeDecision };
     const strictBudgetProfile = config.DEFAULT_PROFILE === "strict-budget" || hints.costMode === "strict";
     if (hints.untrustedContent && (features.hasToolsDeclared || features.toolMessages > 0)) {
-      if (["grok", "dsCoder", "gpt5Nano", "gpt54Nano", "qwen35Flash", "qwenCoderNext", "m25"].includes(guarded.modelKey)) {
+      if (WEAK_CHEAP_MODEL_KEYS.has(guarded.modelKey)) {
         guarded.modelKey = "m27";
         guarded.modelId = modelIdForKey("m27");
         guarded.label = "SAFETY_FLOOR";
       }
     }
-    if (strictBudgetProfile && guarded.modelKey === "m27" && !modifiers.includes("multimodal") && !modifiers.includes("needs_strict_schema")) {
+    if (
+      strictBudgetProfile &&
+      ["deepseekV4Pro", "m27"].includes(guarded.modelKey) &&
+      !modifiers.includes("multimodal") &&
+      !modifiers.includes("needs_strict_schema")
+    ) {
       if (LOW_RISK_CATEGORIES.has(routeIntent.categoryId) || routeIntent.categoryId === "planning") {
-        guarded.modelKey = "m25";
-        guarded.modelId = modelIdForKey("m25");
+        guarded.modelKey = "deepseekV4Flash";
+        guarded.modelId = modelIdForKey("deepseekV4Flash");
         guarded.label = "STRICT_BUDGET";
       }
     }
-    if (config.DEFAULT_PROFILE === "max-capability" && guarded.modelKey === "m27" && routeIntent.adjustedComplexity === "critical") {
+    if (config.DEFAULT_PROFILE === "max-capability" && ["deepseekV4Pro", "m27"].includes(guarded.modelKey) && routeIntent.adjustedComplexity === "critical") {
       guarded.modelKey = "sonnet";
       guarded.modelId = modelIdForKey("sonnet");
       guarded.label = "MAX_CAPABILITY";
     }
     if (isOnboardingLikeRequest(requestText) && !features.hasToolsDeclared && routeIntent.categoryId !== "high_stakes") {
-      guarded.modelKey = hints.costMode === "strict" ? "grok" : "qwen35Flash";
+      guarded.modelKey = hints.costMode === "strict" ? "grok" : "gemma431b";
       guarded.modelId = modelIdForKey(guarded.modelKey);
       guarded.label = guarded.modelKey === "grok" ? "BUDGET_GUARDRAIL" : "LOW_RISK_VALUE";
     }
@@ -1265,9 +1280,7 @@ function createRuntime(config) {
     ];
     let candidates = buildCandidatesFromKeys(keys, { multimodal: modifiers.includes("multimodal") });
     if (hints.untrustedContent && (features.hasToolsDeclared || features.toolMessages > 0)) {
-      candidates = candidates.filter(
-        (candidate) => !["grok", "dsCoder", "gpt5Nano", "gpt54Nano", "qwen35Flash", "qwenCoderNext", "m25"].includes(candidate.key)
-      );
+      candidates = candidates.filter((candidate) => !WEAK_CHEAP_MODEL_KEYS.has(candidate.key));
     }
     if (!canUseExperimentalCandidates(hints)) {
       candidates = candidates.filter((candidate) => {
@@ -1296,29 +1309,38 @@ function createRuntime(config) {
 
   function buildEscalationTarget(modelKey, score, routeDecision = {}, features = {}, modifiers = []) {
     if (!shouldEscalateFromSelfCheck(score, routeDecision)) return null;
-    if (modelKey === "opus") return null;
-    if (routeDecision.lane === "safe") return modelKey === "sonnet" ? "opus" : "sonnet";
+    if (modelKey === "gpt55") return null;
+    if (routeDecision.lane === "safe") {
+      if (modelKey === "sonnet") return "opus47";
+      if (modelKey === "opus47") return "gpt55";
+      return "gpt55";
+    }
     if (modelKey === "m25") return "m27";
-    if (modelKey === "gpt5Nano") return "glm47Flash";
-    if (modelKey === "qwen35Flash" || modelKey === "grok" || modelKey === "dsCoder" || modelKey === "qwenCoderNext") return "m27";
+    if (modelKey === "gpt5Nano") return "gpt54Nano";
+    if (WEAK_CHEAP_MODEL_KEYS.has(modelKey)) return modelKey === "gpt54Nano" ? "glm51" : "m27";
+    if (modelKey === "deepseekV4Pro") {
+      if (routeDecision.lane === "coding") return "mimoV25Pro";
+      return "sonnet";
+    }
     if (modelKey === "m27") {
       if (routeDecision.lane === "vision" || modifiers.includes("multimodal")) {
-        return features.approxTokens >= 18000 ? "qwen35Plus" : "kimiK25";
+        return "qwen36Plus";
       }
       if (routeDecision.lane === "research" || routeDecision.categoryId === "research") {
-        return features.approxTokens >= 18000 || modifiers.includes("long_context") ? "qwen35Plus" : "kimiThinking";
+        return "deepseekV4Pro";
       }
       if (routeDecision.lane === "coding" && score <= 1) return "sonnet";
       if (routeDecision.adjustedComplexity === "critical") return "sonnet";
       return null;
     }
-    if (modelKey === "glm47Flash") return "glm5";
-    if (modelKey === "glm5") return routeDecision.lane === "strict-json" ? "gpt54Mini" : "sonnet";
+    if (modelKey === "glm47Flash" || modelKey === "glm5") return "glm51";
+    if (modelKey === "glm51") return routeDecision.lane === "strict-json" ? "deepseekV4Flash" : "sonnet";
     if (modelKey === "gpt54Mini") return "gpt54";
-    if (modelKey === "gpt54") return "sonnet";
-    if (modelKey === "kimiK25" || modelKey === "kimiThinking") return "sonnet";
-    if (modelKey === "qwen35Plus") return "sonnet";
-    if (modelKey === "sonnet") return "opus";
+    if (modelKey === "gpt54") return "gpt55";
+    if (modelKey === "kimiK25" || modelKey === "kimiThinking") return "kimiK26";
+    if (modelKey === "kimiK26" || modelKey === "qwen35Plus" || modelKey === "qwen36Plus") return "sonnet";
+    if (modelKey === "sonnet") return "opus47";
+    if (modelKey === "opus47" || modelKey === "opus") return "gpt55";
     return ESCALATION_PATH[modelKey] || "m27";
   }
 
@@ -1480,12 +1502,16 @@ function createRuntime(config) {
   function buildValidationRecoveryKeys(modelKey, routeDecision, modifiers = []) {
     if (!modifiers.includes("needs_strict_schema")) return [];
     if (routeDecision.label === "FORCED" || routeDecision.label === "PINNED") return [];
-    if (modelKey === "m27") return ["glm47Flash", "glm5", "gpt54Mini", "gpt54", "sonnet"];
-    if (modelKey === "glm47Flash") return ["glm5", "gpt54Mini", "gpt54", "sonnet"];
-    if (modelKey === "glm5") return ["gpt54Mini", "gpt54", "sonnet"];
+    if (modelKey === "gpt54Nano") return ["glm51", "deepseekV4Flash", "m27", "gpt54Mini", "sonnet"];
+    if (modelKey === "glm51") return ["deepseekV4Flash", "gpt54Mini", "sonnet"];
+    if (modelKey === "deepseekV4Flash") return ["glm51", "gpt54Mini", "sonnet"];
+    if (modelKey === "m27") return ["glm51", "deepseekV4Flash", "gpt54Mini", "gpt54", "sonnet"];
+    if (modelKey === "glm47Flash") return ["glm51", "deepseekV4Flash", "gpt54Mini", "sonnet"];
+    if (modelKey === "glm5") return ["glm51", "deepseekV4Flash", "gpt54Mini", "sonnet"];
     if (modelKey === "gpt54Mini") return ["gpt54", "sonnet"];
-    if (modelKey === "gpt54") return ["sonnet"];
-    if (modelKey === "sonnet") return ["opus"];
+    if (modelKey === "gpt54") return ["gpt55", "sonnet"];
+    if (modelKey === "sonnet") return ["opus47", "gpt55"];
+    if (modelKey === "opus47") return ["gpt55"];
     return [];
   }
 
@@ -2222,9 +2248,10 @@ function createRuntime(config) {
 
   const exposedModels = {
     ...RAW_MODEL_MANIFEST,
-    nano: RAW_MODEL_MANIFEST.gpt5Nano,
+    nano: RAW_MODEL_MANIFEST.gpt54Nano,
     mini: RAW_MODEL_MANIFEST.gpt54Mini,
-    gemFlash: RAW_MODEL_MANIFEST.gem25FlashLite
+    gemFlash: RAW_MODEL_MANIFEST.gem25FlashLite,
+    grok41Fast: RAW_MODEL_MANIFEST.grok
   };
 
   return {
