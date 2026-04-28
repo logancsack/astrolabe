@@ -33,12 +33,14 @@ Both endpoints run through the same routing engine.
 
 ## Workhorse and specialists
 
-- `m27` is the default workhorse
-- `m25` is strict-budget and fallback only
-- `kimiK25` handles multimodal work
-- `kimiThinking` handles deeper research/planning
-- `glm5` handles strict JSON and tool/schema-sensitive requests
-- `sonnet` and `opus` own the safe lane
+- `deepseekV4Pro` is the first serious-work default for `auto` and `coding`
+- `m27` is the conservative fallback and safety-floor workhorse
+- `deepseekV4Flash` handles cheap long-context fallback and strict-schema recovery
+- `qwen36Plus`, `kimiK26`, `gemma431b`, and `mistralSmall4` handle multimodal routing by capability and cost
+- `glm51` handles strict JSON and tool/schema-sensitive recovery
+- `sonnet`, `opus47`, and `gpt55` own the safe escalation path
+
+Older rejected roster entries remain raw-only/manual-pin for one transition release. They are visible in `GET /v1/models?view=raw` under `raw_only`, but they are not used by virtual lane defaults or fallbacks.
 
 ## Safety model
 

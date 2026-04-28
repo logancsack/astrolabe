@@ -16,18 +16,18 @@ Cheap low-risk turns can now skip both the model classifier and the verifier. Ac
 
 | Lane | Default candidate order |
 | --- | --- |
-| `auto` | `m27 -> qwen35Plus -> kimiThinking -> kimiK25 -> sonnet -> opus` |
-| `coding` | `m27 -> qwenCoderNext -> glm5 -> sonnet -> opus` |
-| `research` | `qwen35Plus -> kimiThinking -> m27 -> sonnet -> opus` |
-| `vision` | `kimiK25 -> qwen35Plus -> gem25Pro -> sonnet` |
-| `strict-json` | `m27 -> glm47Flash -> glm5 -> gpt54Mini -> gpt54 -> sonnet` |
-| `cheap` | `qwen35Flash -> grok -> m25 -> dsCoder -> gpt5Nano` |
-| `safe` | `sonnet -> opus` |
+| `auto` | `deepseekV4Pro -> m27 -> mimoV25Pro -> qwen36Plus -> kimiK26 -> sonnet` |
+| `coding` | `deepseekV4Pro -> m27 -> mimoV25Pro -> kimiK26 -> glm51 -> sonnet` |
+| `research` | `qwen36Plus -> mimoV25Pro -> m27 -> deepseekV4Pro -> grok420 -> gpt54 -> opus47 -> gpt55` |
+| `vision` | `qwen36Plus -> kimiK26 -> gemma431b -> mistralSmall4 -> sonnet` |
+| `strict-json` | `gpt54Nano -> glm51 -> deepseekV4Flash -> m27 -> gpt54Mini -> sonnet` |
+| `cheap` | `gemma431b -> deepseekV4Flash -> grok -> mistralSmall4 -> gpt54Nano` |
+| `safe` | `sonnet -> opus47 -> gpt55 -> gpt54` |
 
 Experimental branches exist behind an opt-in preview gate:
 
-- `research`: `grok420`, `gem31Pro`
-- `vision`: `gem31Pro`, `gem31FlashLite`
+- `research`: `gem31Pro`
+- `vision`: `gem31Pro`, `gem31ProTools`, `mimoV25`, `glm5vTurbo`
 
 Those candidates only appear when both of these are true:
 
@@ -36,22 +36,23 @@ Those candidates only appear when both of these are true:
 
 ## Key routing rules
 
-- `m27` is the default executor for most non-trivial `core_loop`, `planning`, `orchestration`, `coding`, `research`, and `reflection` requests.
-- `m25` only appears as a strict-budget or fallback path.
+- `deepseekV4Pro` is the first executor for most non-trivial `core_loop`, `planning`, `orchestration`, `coding`, `research`, and `reflection` requests.
+- `m27` remains the conservative fallback and the floor for untrusted content with tools.
 - Multimodal inputs promote the `vision` lane.
 - Tool presence alone does not promote `strict-json`.
 - Explicit structured output and schema-sensitive work promote the `strict-json` lane.
-- Inside `strict-json`, `m27` still gets the first attempt and specialists only activate after concrete validation failure.
+- Inside `strict-json`, `gpt54Nano` gets the first attempt, then concrete validation failure recovers through `glm51`, `deepseekV4Flash`, `m27`, `gpt54Mini`, and `sonnet`.
 - High-stakes or approval-sensitive work promotes the `safe` lane.
 - Untrusted content plus tools cannot stay on cheap weak tiers.
 - Sticky execution can keep the current workhorse stable across active OpenClaw sessions.
+- Deprecated roster entries are raw-only/manual-pin for one transition release and are excluded from virtual lane defaults and fallbacks.
 
 ## Profiles and guardrails
 
 `ASTROLABE_DEFAULT_PROFILE` changes the final route after base lane selection:
 
 - `default`: normal behavior
-- `strict-budget`: allows `m25` to replace `m27` on cheaper low-risk routes
+- `strict-budget`: allows `deepseekV4Flash` to replace `deepseekV4Pro` or `m27` on cheaper low-risk routes
 - `safe-untrusted`: pair with untrusted-content metadata for stricter safety floors
 - `low-latency`: keeps the same lane logic but still routes onto `m27`
 - `max-capability`: promotes more critical work upward
@@ -75,12 +76,11 @@ Astrolabe only escalates non-stream responses.
 
 Important paths:
 
-- `m25 -> m27`
-- `qwen35Flash/grok/qwenCoderNext/dsCoder -> m27`
-- `m27 -> glm47Flash -> glm5` for strict JSON / schema recovery after validation failure
-- `m27 -> qwen35Plus` or `kimiThinking` for research specialization
-- `m27 -> kimiK25` or `qwen35Plus` for multimodal specialization
-- `m27 -> sonnet -> opus` only on critical or safe-lane escalation
+- `deepseekV4Pro -> m27 -> sonnet` for serious-work fallback
+- `deepseekV4Flash -> gemma431b/grok/m27` for cheap long-context fallback
+- `gpt54Nano -> glm51 -> deepseekV4Flash -> m27 -> gpt54Mini -> sonnet` for strict schema recovery
+- `sonnet -> opus47 -> gpt55` for safe-lane escalation
+- Weak cheap tiers such as `gemma431b`, `mistralSmall4`, `grok`, `gpt54Nano`, and `deepseekV4Flash` cannot remain selected for untrusted content with tools
 
 ## Safety controls
 

@@ -11,38 +11,36 @@ OpenRouter is the maintainer reference for model IDs and pricing, but the active
 
 | Key | Model ID | Role |
 | --- | --- | --- |
-| `m27` | `minimax/minimax-m2.7` | Main workhorse for serious OpenClaw turns |
-| `m25` | `minimax/minimax-m2.5` | Strict-budget, fallback, and overflow only |
-| `kimiK25` | `moonshotai/kimi-k2.5` | Multimodal and visual specialist |
-| `kimiThinking` | `moonshotai/kimi-k2-thinking` | Long-horizon research/planning specialist |
-| `glm47Flash` | `z-ai/glm-4.7-flash` | Cheap first-line strict JSON and tool-argument model |
-| `glm5` | `z-ai/glm-5` | Hard schema, tool, and system-design specialist |
+| `deepseekV4Pro` | `deepseek/deepseek-v4-pro` | First serious-work default for `auto` and `coding` |
+| `deepseekV4Flash` | `deepseek/deepseek-v4-flash` | Cheap long-context, coding fallback, and schema recovery |
+| `m27` | `minimax/minimax-m2.7` | Conservative serious-work fallback and safety floor |
+| `mimoV25Pro` | `xiaomi/mimo-v2.5-pro` | Long-context coding/research challenger |
+| `kimiK26` | `moonshotai/kimi-k2.6` | Multimodal and visual coding specialist |
+| `glm51` | `z-ai/glm-5.1` | Strict JSON, tool, and schema-repair specialist |
 | `grok` | `x-ai/grok-4.1-fast` | Cheap long-context tool-capable model |
-| `dsCoder` | `deepseek/deepseek-v3.2` | Low-cost text-heavy overflow model |
-| `qwen35Flash` | `qwen/qwen3.5-flash-02-23` | Cheap generalist for chat, retrieval, and summarization |
-| `qwen35Plus` | `qwen/qwen3.5-plus-02-15` | Long-context multimodal research/value model |
-| `qwenCoderNext` | `qwen/qwen3-coder-next` | Cost-sensitive coding specialist |
+| `grok420` | `x-ai/grok-4.20` | Active research candidate for long-context synthesis |
+| `qwen36Plus` | `qwen/qwen3.6-plus` | Long-context multimodal research and vision default |
+| `gemma431b` | `google/gemma-4-31b-it` | Cheapest active multimodal generalist |
+| `mistralSmall4` | `mistralai/mistral-small-2603` | Active cheap multimodal fallback |
 | `gpt54` | `openai/gpt-5.4` | Cross-family verifier or premium executor |
 | `gpt54Mini` | `openai/gpt-5.4-mini` | Cheap control-plane and verifier role |
-| `gpt5Nano` | `openai/gpt-5-nano` | Default router, classifier, and lightweight verifier |
-| `gpt54Nano` | `openai/gpt-5.4-nano` | Raw available only, not the default nano alias |
-| `gem25FlashLite` | `google/gemini-2.5-flash-lite` | Stable cheap multimodal ingest/extraction model |
-| `gem25Pro` | `google/gemini-2.5-pro` | Stable premium multimodal branch |
-| `gem31FlashLite` | `google/gemini-3.1-flash-lite-preview` | Preview multimodal fast path |
-| `gem31Pro` | `google/gemini-3.1-pro-preview` | Preview multimodal research branch |
-| `grok420` | `x-ai/grok-4.20` | Selective preview premium research branch |
-| `mimoV2Flash` | `xiaomi/mimo-v2-flash` | Raw-only evaluation model |
-| `mistralSmall4` | `mistralai/mistral-small-2603` | Raw-only evaluation model |
+| `gpt54Nano` | `openai/gpt-5.4-nano` | Active nano alias, cheap schema/control model |
+| `gpt55` | `openai/gpt-5.5` | Premium frontier escalation |
 | `sonnet` | `anthropic/claude-sonnet-4.6` | Safe-lane default and premium escalation |
-| `opus` | `anthropic/claude-opus-4.6` | Final escalation |
+| `opus47` | `anthropic/claude-opus-4.7` | Final safe-lane escalation before GPT-5.5 |
+
+Raw-only transition keys remain requestable by raw key or model ID for one release, but are removed from virtual lane defaults and fallbacks: `gpt5Nano`, `m25`, `kimiK25`, `kimiThinking`, `glm5`, `qwen35Plus`, `qwen35Flash`, `qwenCoderNext`, `gem25Pro`, `gem25FlashLite`, and `opus`.
+
+Preview/evaluation keys remain gated by preview routing: `gem31Pro`, `gem31ProTools`, `mimoV25`, and `glm5vTurbo`.
 
 ## Compatibility aliases
 
 | Alias | Resolves To |
 | --- | --- |
-| `nano` | `gpt5Nano` |
+| `nano` | `gpt54Nano` |
 | `mini` | `gpt54Mini` |
 | `gemFlash` | `gem25FlashLite` |
+| `grok41Fast` | `grok` |
 
 ## Virtual models
 
@@ -58,12 +56,12 @@ These are the recommended public-facing models for OpenClaw users:
 
 ## Roster policy
 
-- `m27` is the default workhorse.
-- `m25` is intentionally not the main default anymore.
-- `gpt-5-nano` owns the control plane by default.
-- Kimi and GLM stay first-class specialists.
+- Each model must earn an active slot on cost, capability, and recency. Models more than two generations old should be raw-only unless they provide a uniquely cheap role.
+- `deepseekV4Pro` is the first serious-work default.
+- `m27` remains the conservative fallback and safety-floor workhorse.
+- `gpt-5.4-nano` owns the active nano/control alias.
+- Kimi, GLM, Qwen, MiMo, and Gemma stay first-class specialists where they win on benchmarks or price.
 - Preview and experimental models are opt-in and excluded from default lane manifests.
-- `grok420`, `gem31Pro`, and `gem31FlashLite` only surface when preview routing is explicitly enabled.
-- `mimoV2Flash` and `mistralSmall4` are raw-only eval models, not active defaults.
+- Rejected older models stay in `raw_only` for one transition release, then should be removed unless a maintainer re-approves a manual-pin reason.
 - Raw model additions should be checked into the manifest explicitly.
 - Use `npm run validate:models` to compare the static manifest against OpenRouter before releasing roster changes.
