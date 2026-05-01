@@ -16,10 +16,10 @@ Cheap low-risk turns can now skip both the model classifier and the verifier. Ac
 
 | Lane | Default candidate order |
 | --- | --- |
-| `auto` | `deepseekV4Pro -> m27 -> mimoV25Pro -> qwen36Plus -> kimiK26 -> sonnet` |
-| `coding` | `deepseekV4Pro -> m27 -> mimoV25Pro -> kimiK26 -> glm51 -> sonnet` |
-| `research` | `qwen36Plus -> mimoV25Pro -> m27 -> deepseekV4Pro -> grok420 -> gpt54 -> opus47 -> gpt55` |
-| `vision` | `qwen36Plus -> kimiK26 -> gemma431b -> mistralSmall4 -> sonnet` |
+| `auto` | `deepseekV4Pro -> m27 -> mimoV25Pro -> qwen36Plus -> kimiK26 -> grok43 -> sonnet` |
+| `coding` | `deepseekV4Pro -> m27 -> mimoV25Pro -> kimiK26 -> glm51 -> grok43 -> sonnet` |
+| `research` | `qwen36Plus -> mimoV25Pro -> m27 -> deepseekV4Pro -> grok43 -> gpt54 -> opus47 -> gpt55` |
+| `vision` | `qwen36Plus -> kimiK26 -> gemma431b -> mistralSmall4 -> grok43 -> sonnet` |
 | `strict-json` | `gpt54Nano -> glm51 -> deepseekV4Flash -> m27 -> gpt54Mini -> sonnet` |
 | `cheap` | `gemma431b -> deepseekV4Flash -> grok -> mistralSmall4 -> gpt54Nano` |
 | `safe` | `sonnet -> opus47 -> gpt55 -> gpt54` |
@@ -38,6 +38,7 @@ Those candidates only appear when both of these are true:
 
 - `deepseekV4Pro` is the first executor for most non-trivial `core_loop`, `planning`, `orchestration`, `coding`, `research`, and `reflection` requests.
 - `m27` remains the conservative fallback and the floor for untrusted content with tools.
+- `grok43` is the active premium Grok agentic/research candidate, replacing `grok420`; it is excluded from `cheap` because reasoning is always active and first-token latency is high.
 - Multimodal inputs promote the `vision` lane.
 - Tool presence alone does not promote `strict-json`.
 - Explicit structured output and schema-sensitive work promote the `strict-json` lane.
@@ -78,6 +79,7 @@ Important paths:
 
 - `deepseekV4Pro -> m27 -> sonnet` for serious-work fallback
 - `deepseekV4Flash -> gemma431b/grok/m27` for cheap long-context fallback
+- `grok420 -> grok43 -> sonnet` for raw/manual-pinned Grok 4.20 transition fallback
 - `gpt54Nano -> glm51 -> deepseekV4Flash -> m27 -> gpt54Mini -> sonnet` for strict schema recovery
 - `sonnet -> opus47 -> gpt55` for safe-lane escalation
 - Weak cheap tiers such as `gemma431b`, `mistralSmall4`, `grok`, `gpt54Nano`, and `deepseekV4Flash` cannot remain selected for untrusted content with tools

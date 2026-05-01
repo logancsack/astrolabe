@@ -37,6 +37,7 @@ Both endpoints run through the same routing engine.
 - `m27` is the conservative fallback and safety-floor workhorse
 - `deepseekV4Flash` handles cheap long-context fallback and strict-schema recovery
 - `qwen36Plus`, `kimiK26`, `gemma431b`, and `mistralSmall4` handle multimodal routing by capability and cost
+- `grok43` is the premium Grok research/agentic candidate; it is available for long-context multimodal work but is kept out of the cheap and safe lanes
 - `glm51` handles strict JSON and tool/schema-sensitive recovery
 - `sonnet`, `opus47`, and `gpt55` own the safe escalation path
 

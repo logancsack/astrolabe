@@ -18,7 +18,7 @@ OpenRouter is the maintainer reference for model IDs and pricing, but the active
 | `kimiK26` | `moonshotai/kimi-k2.6` | Multimodal and visual coding specialist |
 | `glm51` | `z-ai/glm-5.1` | Strict JSON, tool, and schema-repair specialist |
 | `grok` | `x-ai/grok-4.1-fast` | Cheap long-context tool-capable model |
-| `grok420` | `x-ai/grok-4.20` | Active research candidate for long-context synthesis |
+| `grok43` | `x-ai/grok-4.3` | Premium agentic, instruction-following, and research candidate |
 | `qwen36Plus` | `qwen/qwen3.6-plus` | Long-context multimodal research and vision default |
 | `gemma431b` | `google/gemma-4-31b-it` | Cheapest active multimodal generalist |
 | `mistralSmall4` | `mistralai/mistral-small-2603` | Active cheap multimodal fallback |
@@ -29,7 +29,7 @@ OpenRouter is the maintainer reference for model IDs and pricing, but the active
 | `sonnet` | `anthropic/claude-sonnet-4.6` | Safe-lane default and premium escalation |
 | `opus47` | `anthropic/claude-opus-4.7` | Final safe-lane escalation before GPT-5.5 |
 
-Raw-only transition keys remain requestable by raw key or model ID for one release, but are removed from virtual lane defaults and fallbacks: `gpt5Nano`, `m25`, `kimiK25`, `kimiThinking`, `glm5`, `qwen35Plus`, `qwen35Flash`, `qwenCoderNext`, `gem25Pro`, `gem25FlashLite`, and `opus`.
+Raw-only transition keys remain requestable by raw key or model ID for one release, but are removed from virtual lane defaults and fallbacks: `gpt5Nano`, `m25`, `kimiK25`, `kimiThinking`, `glm5`, `grok420`, `qwen35Plus`, `qwen35Flash`, `qwenCoderNext`, `gem25Pro`, `gem25FlashLite`, and `opus`.
 
 Preview/evaluation keys remain gated by preview routing: `gem31Pro`, `gem31ProTools`, `mimoV25`, and `glm5vTurbo`.
 
@@ -59,6 +59,7 @@ These are the recommended public-facing models for OpenClaw users:
 - Each model must earn an active slot on cost, capability, and recency. Models more than two generations old should be raw-only unless they provide a uniquely cheap role.
 - `deepseekV4Pro` is the first serious-work default.
 - `m27` remains the conservative fallback and safety-floor workhorse.
+- `grok43` earns an active slot as the premium Grok research and agentic candidate, replacing `grok420` in active routing. It is not a cheap-lane model because reasoning is always active and latency is materially higher than the fast value tier.
 - `gpt-5.4-nano` owns the active nano/control alias.
 - Kimi, GLM, Qwen, MiMo, and Gemma stay first-class specialists where they win on benchmarks or price.
 - Preview and experimental models are opt-in and excluded from default lane manifests.
