@@ -79,6 +79,7 @@ test("model registry exposes current roster and compatibility aliases", () => {
   assert.equal(internals.MODELS.deepseekV4Pro.id, "deepseek/deepseek-v4-pro");
   assert.equal(internals.MODELS.gpt55.id, "openai/gpt-5.5");
   assert.equal(internals.MODELS.grok420.id, "x-ai/grok-4.20");
+  assert.equal(internals.MODELS.grok43.id, "x-ai/grok-4.3");
 });
 
 test("default planning route prefers DeepSeek V4 Pro", () => {
@@ -272,8 +273,17 @@ test("experimental candidates stay hidden unless preview routing is enabled", ()
       allowPreview: false
     }
   );
-  assert.equal(candidates.some((candidate) => candidate.key === "grok420"), true);
+  assert.equal(candidates.some((candidate) => candidate.key === "grok420"), false);
+  assert.equal(candidates.some((candidate) => candidate.key === "grok43"), true);
   assert.equal(candidates.some((candidate) => candidate.key === "gem31Pro"), false);
+});
+
+test("research lane replaces Grok 4.20 with Grok 4.3", () => {
+  const candidates = internals.LANE_MANIFEST.research.defaultCandidates;
+  assert.ok(candidates.includes("grok43"));
+  assert.equal(candidates.includes("grok420"), false);
+  assert.equal(internals.MODELS.grok420.rawOnly, true);
+  assert.equal(internals.MODELS.grok420.activeDefault, false);
 });
 
 test("cheap model escalation goes to m27 before premium models", () => {

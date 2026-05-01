@@ -83,7 +83,7 @@ Core production roster:
 - `kimiK26` -> `moonshotai/kimi-k2.6`
 - `glm51` -> `z-ai/glm-5.1`
 - `grok` -> `x-ai/grok-4.1-fast`
-- `grok420` -> `x-ai/grok-4.20`
+- `grok43` -> `x-ai/grok-4.3`
 - `qwen36Plus` -> `qwen/qwen3.6-plus`
 - `gemma431b` -> `google/gemma-4-31b-it`
 - `mistralSmall4` -> `mistralai/mistral-small-2603`
@@ -94,7 +94,7 @@ Core production roster:
 - `sonnet` -> `anthropic/claude-sonnet-4.6`
 - `opus47` -> `anthropic/claude-opus-4.7`
 
-Raw-only transition models remain requestable by raw key or model ID for one release, but are removed from virtual lane defaults and fallbacks: `gpt5Nano`, `m25`, `kimiK25`, `kimiThinking`, `glm5`, `qwen35Plus`, `qwen35Flash`, `qwenCoderNext`, `gem25Pro`, `gem25FlashLite`, `opus`, plus older raw pins such as `o3`, `o4Mini`, `gpt54Pro`, and `gpt53Codex` if present in a downstream deployment.
+Raw-only transition models remain requestable by raw key or model ID for one release, but are removed from virtual lane defaults and fallbacks: `gpt5Nano`, `m25`, `kimiK25`, `kimiThinking`, `glm5`, `grok420`, `qwen35Plus`, `qwen35Flash`, `qwenCoderNext`, `gem25Pro`, `gem25FlashLite`, `opus`, plus older raw pins such as `o3`, `o4Mini`, `gpt54Pro`, and `gpt53Codex` if present in a downstream deployment.
 
 Preview/evaluation models remain gated behind preview routing: `gem31Pro`, `gem31ProTools`, `mimoV25`, and `glm5vTurbo`.
 
@@ -107,10 +107,10 @@ Compatibility aliases:
 
 ## Routing defaults
 
-- `astrolabe/auto`: `deepseekV4Pro -> m27 -> mimoV25Pro -> qwen36Plus -> kimiK26 -> sonnet`
-- `astrolabe/coding`: `deepseekV4Pro -> m27 -> mimoV25Pro -> kimiK26 -> glm51 -> sonnet`
-- `astrolabe/research`: `qwen36Plus -> mimoV25Pro -> m27 -> deepseekV4Pro -> grok420 -> gpt54 -> opus47 -> gpt55`
-- `astrolabe/vision`: `qwen36Plus -> kimiK26 -> gemma431b -> mistralSmall4 -> sonnet`
+- `astrolabe/auto`: `deepseekV4Pro -> m27 -> mimoV25Pro -> qwen36Plus -> kimiK26 -> grok43 -> sonnet`
+- `astrolabe/coding`: `deepseekV4Pro -> m27 -> mimoV25Pro -> kimiK26 -> glm51 -> grok43 -> sonnet`
+- `astrolabe/research`: `qwen36Plus -> mimoV25Pro -> m27 -> deepseekV4Pro -> grok43 -> gpt54 -> opus47 -> gpt55`
+- `astrolabe/vision`: `qwen36Plus -> kimiK26 -> gemma431b -> mistralSmall4 -> grok43 -> sonnet`
 - `astrolabe/strict-json`: `gpt54Nano -> glm51 -> deepseekV4Flash -> m27 -> gpt54Mini -> sonnet`
 - `astrolabe/cheap`: `gemma431b -> deepseekV4Flash -> grok -> mistralSmall4 -> gpt54Nano`
 - `astrolabe/safe`: `sonnet -> opus47 -> gpt55 -> gpt54`
@@ -119,6 +119,7 @@ Policy rules worth knowing:
 
 - `deepseekV4Pro` is the first serious-work default for normal `auto` and `coding` turns.
 - `m27` remains the conservative fallback and safety-floor workhorse.
+- `grok43` is an active premium agentic/research candidate. It replaces `grok420` in active routing because it is cheaper and scores higher on current Artificial Analysis benchmarks, but it is not in `cheap` or `safe` because reasoning is always active and latency is high.
 - Preview and experimental models are opt-in. They only join routing when both `ASTROLABE_ALLOW_PREVIEW_MODELS=true` and `metadata.astrolabe.allow_preview=true`.
 - Multimodal turns promote to the vision lane.
 - Tool availability alone does not imply `strict-json`.

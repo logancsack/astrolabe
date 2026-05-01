@@ -167,11 +167,15 @@ test("GET /v1/models?view=raw returns the static checked-in roster", async () =>
     assert.equal(response.status, 200);
     assert.ok(response.body.data.some((model) => model.id === "minimax/minimax-m2.7"));
     assert.ok(response.body.data.some((model) => model.id === "deepseek/deepseek-v4-pro"));
+    assert.ok(response.body.data.some((model) => model.id === "x-ai/grok-4.3"));
     assert.ok(response.body.data.some((model) => model.id === "openai/gpt-5.5"));
     assert.ok(Array.isArray(response.body.buckets.defaults));
     assert.ok(Array.isArray(response.body.buckets.raw_only));
     assert.ok(Array.isArray(response.body.buckets.experimental));
     assert.ok(response.body.buckets.defaults.includes("deepseek/deepseek-v4-pro"));
+    assert.ok(response.body.buckets.defaults.includes("x-ai/grok-4.3"));
+    assert.equal(response.body.buckets.defaults.includes("x-ai/grok-4.20"), false);
+    assert.ok(response.body.buckets.raw_only.includes("x-ai/grok-4.20"));
     assert.ok(response.body.buckets.raw_only.includes("openai/gpt-5-nano"));
   } finally {
     server.close();
@@ -185,8 +189,12 @@ test("GET /v1/lanes exposes lane manifests", async () => {
     const response = await requestJson(port, { path: "/v1/lanes" });
     assert.equal(response.status, 200);
     const codingLane = response.body.data.find((lane) => lane.lane === "coding");
+    const researchLane = response.body.data.find((lane) => lane.lane === "research");
     assert.ok(codingLane);
+    assert.ok(researchLane);
     assert.equal(codingLane.default_candidates[0].id, "deepseek/deepseek-v4-pro");
+    assert.ok(researchLane.default_candidates.some((candidate) => candidate.id === "x-ai/grok-4.3"));
+    assert.equal(researchLane.default_candidates.some((candidate) => candidate.id === "x-ai/grok-4.20"), false);
   } finally {
     server.close();
   }
