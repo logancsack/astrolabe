@@ -134,6 +134,34 @@ test("tool presence alone does not force strict-json", () => {
   assert.equal(route.modelKey, "deepseekV4Pro");
 });
 
+test("classifier cannot downshift long-context auto traffic below DeepSeek", () => {
+  const route = internals.resolveCategoryRoute("communication", "simple", {
+    approxTokens: 49000,
+    messageCount: 10,
+    hasToolsDeclared: true,
+    untrustedContent: true,
+    modifiers: ["tool_present", "untrusted_content"],
+    requestText: "how did you find that out?"
+  });
+  assert.equal(route.lane, "auto");
+  assert.equal(route.modelKey, "deepseekV4Pro");
+  assert.equal(route.adjustedComplexity, "complex");
+  assert.equal(route.label, "DEFAULT");
+});
+
+test("classifier cannot downshift tool-present auto traffic below DeepSeek", () => {
+  const route = internals.resolveCategoryRoute("communication", "simple", {
+    hasToolsDeclared: true,
+    untrustedContent: true,
+    modifiers: ["tool_present", "untrusted_content"],
+    requestText: "you know anything about how astrolabe works?"
+  });
+  assert.equal(route.lane, "auto");
+  assert.equal(route.modelKey, "deepseekV4Pro");
+  assert.equal(route.adjustedComplexity, "standard");
+  assert.equal(route.label, "DEFAULT");
+});
+
 test("explicit structured output promotes strict-json lane", () => {
   const route = internals.resolveCategoryRoute("core_loop", "standard", {
     responseFormat: { type: "json_object" },

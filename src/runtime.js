@@ -118,6 +118,18 @@ function dedupe(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+function maxComplexity(...values) {
+  return values.reduce((max, value) =>
+    COMPLEXITY_ORDER.indexOf(value) > COMPLEXITY_ORDER.indexOf(max) ? value : max
+  );
+}
+
+function complexityFloorForFeatures(features = {}, modifiers = []) {
+  if (modifiers.includes("long_context") || Number(features.approxTokens || 0) >= 12000) return "complex";
+  if (modifiers.includes("tool_present") || features.hasToolsDeclared || Number(features.toolMessages || 0) > 0) return "standard";
+  return "simple";
+}
+
 function normalizeCategoryId(raw) {
   const value = String(raw || "")
     .trim()
@@ -1130,7 +1142,7 @@ function createRuntime(config) {
     if (modifiers.includes("multimodal")) return "qwen36Plus";
     if (routeIntent.categoryId === "high_stakes") return "sonnet";
     if (modifiers.includes("needs_strict_schema")) return "gpt54Nano";
-    if (routeIntent.actionClass === "casual_chat" || routeIntent.actionClass === "message_drafting") return "gemma431b";
+    if (routeIntent.adjustedComplexity === "simple" && (routeIntent.actionClass === "casual_chat" || routeIntent.actionClass === "message_drafting")) return "gemma431b";
     if (M27_WORKHORSE_CATEGORIES.has(routeIntent.categoryId)) return "deepseekV4Pro";
     if (["retrieval", "summarization", "heartbeat"].includes(routeIntent.categoryId) && routeIntent.adjustedComplexity === "simple") {
       return "gemma431b";
@@ -1224,7 +1236,18 @@ function createRuntime(config) {
   }
 
   function resolveCategoryRoute(classification, hints, features, modifiers, safetyGate, actionClass) {
-    const adjustedComplexity = applyRoutingProfile(classification.complexity, classification.categoryId);
+    const heuristicFloor = heuristicComplexity(
+      features.requestText || "",
+      features,
+      safetyGate,
+      hints,
+      classification.categoryId
+    );
+    const adjustedComplexity = maxComplexity(
+      applyRoutingProfile(classification.complexity, classification.categoryId),
+      heuristicFloor,
+      complexityFloorForFeatures(features, modifiers)
+    );
     const routeIntent = {
       categoryId: classification.categoryId,
       complexity: classification.complexity,
