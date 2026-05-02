@@ -1,0 +1,100 @@
+---
+title: "Customize Stacks"
+description: "Configure model boundaries, objectives, fallback, verification, budget, memory, and observability."
+---
+
+Custom stacks give your workspace explicit control over how Astrolabe Cloud routes requests.
+
+Start by cloning a managed stack, then publish a custom version when the policy is ready.
+
+## Boundaries
+
+Boundaries decide which candidates are eligible before scoring.
+
+Use them to configure:
+
+- `allowedProviders`
+- `blockedProviders`
+- `allowedModels`
+- `blockedModels`
+- `requiredCapabilities`
+- `dataPolicy`
+- `retentionPolicy`
+- `fallbackMustStayInPolicy`
+
+If no candidate remains after boundaries are applied, the gateway returns `routing_policy_blocked` and does not call a provider.
+
+## Objective
+
+The objective tells Astrolabe what the stack optimizes for.
+
+Key fields:
+
+- `primary`: routing strategy such as lowest-cost passable model, fastest passable model, highest quality within budget, fixed priority order, or custom rules.
+- `qualityTarget`: `draft`, `standard`, `high`, or `critical`.
+- `costMode`: `lowest_passable`, `balanced`, `fastest_passable`, `premium`, or `fixed`.
+- `latencySloMs`: optional latency target.
+- `reliabilityTarget`: optional reliability target.
+- `maxExpectedCostUsd`: optional per-request expected cost ceiling.
+
+## Fallback
+
+Fallback controls retry and escalation behavior.
+
+Configure:
+
+- whether fallback is enabled
+- maximum attempts
+- fallback mode
+- trigger reasons such as provider errors, schema failures, or verifier low confidence
+- categories that should never escalate
+
+When `fallbackMustStayInPolicy` is enabled, fallback candidates must still satisfy stack boundaries.
+
+## Verification
+
+Verification controls post-response checks.
+
+Modes include:
+
+- `off`
+- `auto`
+- `light`
+- `strict`
+- `strong`
+
+Use stricter verification for schema-heavy, high-stakes, customer-data, or external-action workflows. Use lighter verification for low-risk high-volume traffic.
+
+## Budget
+
+Budget settings help keep traffic inside workspace policy:
+
+- monthly budget
+- daily budget
+- per-request maximum
+- warning percentage
+- hard-stop percentage
+
+Prepaid workspace balance still applies to every request.
+
+## Memory
+
+Memory settings control what Astrolabe can learn from outcomes:
+
+- workspace outcome learning
+- user feedback learning
+- raw prompt storage
+- raw output storage
+- fingerprint-only mode
+
+For sensitive workloads, keep raw prompt and output storage disabled and use fingerprint-only memory.
+
+## Observability
+
+Observability controls response metadata and trace persistence:
+
+- response headers
+- inline metadata
+- route trace persistence
+
+Disable trace persistence only when your data policy requires it. The `x-astrolabe-cloud-request-id` header is still the best support handle.

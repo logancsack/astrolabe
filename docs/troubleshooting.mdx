@@ -1,123 +1,133 @@
 ---
 title: "Troubleshooting"
-description: "Diagnose common Astrolabe issues and verify runtime behavior."
+description: "Diagnose Cloud auth, billing, stack resolution, policy blocks, rate limits, and unbillable requests."
 ---
 
-Use this page as a step-by-step diagnostic playbook.
+Always capture `x-astrolabe-cloud-request-id` when debugging. It links the gateway response to route traces, usage rows, model-call records, and operational events.
 
-## Fast triage flow
+## Unauthorized
 
-1. Check `GET /health` first.
-2. Confirm inbound auth behavior.
-3. Run one known-good non-stream request.
-4. Inspect `x-astrolabe-*` response headers.
-5. Inspect server logs for route and model decisions.
+Symptoms:
 
-## `Missing OPENROUTER_API_KEY`
-
-What it means: Astrolabe cannot call upstream models.
+- HTTP `401`
+- error code `unauthorized`
+- message says bearer authentication is required or the gateway key was not found
 
 Fix:
 
-1. Set `OPENROUTER_API_KEY` in `.env` or deployment env vars.
-2. Restart the process.
-3. Re-check `/health` and retry request.
+- Send `Authorization: Bearer <ASTROLABE_CLOUD_KEY>` or `x-api-key`.
+- Confirm the key was copied from the Cloud app.
+- Confirm the key has not been revoked.
 
-## 401 unauthorized
+## Payment required
 
-What it means: inbound key does not match `ASTROLABE_API_KEY`.
+Symptoms:
 
-Fix:
-
-1. Send `Authorization: Bearer <your_astrolabe_key>` or `x-api-key`.
-2. Verify there is no trailing whitespace in env value.
-3. Confirm client and server are using the same key.
-
-## `rate_limit_exceeded`
-
-What it means: request volume exceeded configured budget while `ASTROLABE_RATE_LIMIT_ENABLED=true`.
+- HTTP `402`
+- error code `payment_required`
+- message references prepaid balance
 
 Fix:
 
-1. Wait for `retry-after` seconds and retry.
-2. Increase `ASTROLABE_RATE_LIMIT_MAX_REQUESTS`.
-3. Increase `ASTROLABE_RATE_LIMIT_WINDOW_MS`.
-4. Disable limiter if needed for trusted/private traffic.
+- Add credits in Billing.
+- Wait for checkout completion and ledger credit.
+- Reduce request size or choose a lower-cost stack if the reservation is too large.
 
-## `high_stakes_confirmation_required`
+## Rate limited
 
-What it means: high-stakes signal detected while `ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict`.
+Symptoms:
 
-Fix:
-
-1. Resend with `x-astrolabe-confirmed: <token>`.
-2. Or include `metadata.astrolabe_confirmed: "<token>"` in request body.
-3. Ensure token matches `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` exactly.
-
-## `invalid_json` or `payload_too_large`
-
-What it means: request body is malformed JSON or exceeds payload limit.
+- HTTP `429`
+- error code `rate_limited`
+- `x-ratelimit-remaining: 0`
 
 Fix:
 
-1. Validate JSON before sending.
-2. Ensure `messages` is present and valid.
-3. Reduce payload size if request is too large.
+- Back off until the `x-ratelimit-reset` timestamp.
+- Use separate keys for separate services if traffic should be isolated.
 
-## Need full JSON instead of SSE
+## Stack not found
 
-What it means: streaming is default.
+Symptoms:
 
-Fix:
-
-- send `"stream": false` in request body
-
-## Upstream OpenRouter errors
-
-What it means: Astrolabe reached upstream but provider/model call failed.
-
-Check:
-
-1. Key validity and account credits.
-2. Model availability at provider.
-3. Payload shape compatibility.
-4. OpenRouter status.
-
-Astrolabe retries retryable model/provider errors across fallback candidates when available.
-
-## Unexpected routing choice
-
-What it means: policy interpreted request differently than expected.
-
-Check:
-
-1. `x-astrolabe-category` and `x-astrolabe-complexity` headers.
-2. active modes from `/health`.
-3. whether cost guardrails or premium-route blocks changed final route.
-4. whether `ASTROLABE_FORCE_MODEL` is set.
-
-## `est_usd=n/a` in logs
-
-What it means: upstream usage token fields were not provided.
+- HTTP `404`
+- error code such as `routing_stack_not_found` or `routing_stack_resolution_failed`
 
 Fix:
 
-- expected for some providers/responses; no action required unless cost reporting is mandatory
+- Check `metadata.astrolabe.stack`.
+- Confirm the stack slug exists in the workspace.
+- Confirm the selected version is active.
+- Remove the request override to fall back to key, workspace, or managed default assignment.
 
-## Config change had no effect
+## Routing policy blocked
 
-Check:
+Symptoms:
 
-1. Astrolabe was restarted after env changes.
-2. You edited the correct environment scope (local vs deployment).
-3. `/health` shows expected normalized values.
-4. Variable names and values match [Configuration](/configuration).
+- HTTP `409`
+- error code `routing_policy_blocked`
+- message says no allowed candidates remain after applying stack boundaries
 
-## Last-resort debug snapshot
+Fix:
 
-Capture these for debugging:
+- Check allowed and blocked providers.
+- Check allowed and blocked models.
+- Check required capabilities.
+- Check max expected cost.
+- Check whether fallback is required to stay inside policy.
+- Inspect rejected candidates in the route trace.
 
-1. request body (without secrets)
-2. response status + headers (`x-astrolabe-*`)
-3. `/health` output
-4. relevant server log line (`category`, `route`, `chosen_model`, `final_model`, `selfcheck_score`)
+## Unknown model or pricing model
+
+Symptoms:
+
+- HTTP `404` or `502`
+- error code `unknown_model`, `unknown_pricing_model`, or similar
+
+Fix:
+
+- Use `GET /v1/models` to confirm public model IDs.
+- Prefer virtual models such as `astrolabe/auto`.
+- If requesting a concrete model, confirm it is active in the hosted model catalog.
+
+## Structured output invalid
+
+Symptoms:
+
+- HTTP `502`
+- error code `structured_output_invalid`
+
+Fix:
+
+- Use `astrolabe/strict-json`.
+- Use the `strict-json` stack.
+- Set `metadata.astrolabe.verification` to `strict` or `strong`.
+- Inspect the route trace to see whether schema recovery ran.
+
+## Unbillable usage
+
+Unbillable records are expected for some failures. Astrolabe records them so operators can distinguish provider cost, customer billing, and rejected traffic.
+
+Common unbillable reasons:
+
+- `missing_provider_usage`
+- `streaming_provider_error`
+- `origin_unreachable`
+- `unknown_pricing_model`
+- `structured_output_invalid`
+- tool or policy rejection codes
+
+Unbillable requests should not debit customer balance.
+
+## Support checklist
+
+Send support:
+
+- `x-astrolabe-cloud-request-id`
+- timestamp
+- endpoint
+- requested model
+- stack slug if used
+- response status
+- error code
+- relevant response headers

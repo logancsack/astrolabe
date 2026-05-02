@@ -1,115 +1,121 @@
 ---
 title: "Routing Reference"
-description: "Current Astrolabe lane logic, guardrails, and escalation behavior."
+description: "Stack resolution, model selection, fallback, verification, and trace metadata."
 ---
 
-Astrolabe routes in four steps:
+Astrolabe Cloud routing is stack-driven. The requested model defines the candidate set, and the active routing stack filters and scores those candidates.
 
-1. classify category and complexity
-2. derive route modifiers
-3. choose a lane
-4. select candidates from the static manifest
+## Routing inputs
 
-Cheap low-risk turns can now skip both the model classifier and the verifier. Active OpenClaw work sessions can also reuse the last successful in-lane model when sticky execution metadata is present.
+The gateway considers:
 
-## Lane defaults
+- requested model or virtual model
+- workspace and API-key context
+- active routing stack
+- request overrides in `metadata.astrolabe`
+- estimated input and output tokens
+- task category, action class, complexity, and route modifiers
+- hosted model catalog and pricing
 
-| Lane | Default candidate order |
-| --- | --- |
-| `auto` | `deepseekV4Pro -> m27 -> mimoV25Pro -> qwen36Plus -> kimiK26 -> grok43 -> sonnet` |
-| `coding` | `deepseekV4Pro -> m27 -> mimoV25Pro -> kimiK26 -> glm51 -> grok43 -> sonnet` |
-| `research` | `qwen36Plus -> mimoV25Pro -> m27 -> deepseekV4Pro -> grok43 -> gpt54 -> opus47 -> gpt55` |
-| `vision` | `qwen36Plus -> kimiK26 -> gemma431b -> mistralSmall4 -> grok43 -> sonnet` |
-| `strict-json` | `gpt54Nano -> glm51 -> deepseekV4Flash -> m27 -> gpt54Mini -> sonnet` |
-| `cheap` | `gemma431b -> deepseekV4Flash -> grok -> mistralSmall4 -> gpt54Nano` |
-| `safe` | `sonnet -> opus47 -> gpt55 -> gpt54` |
+## Stack resolution
 
-Experimental branches exist behind an opt-in preview gate:
+Resolution order:
 
-- `research`: `gem31Pro`
-- `vision`: `gem31Pro`, `gem31ProTools`, `mimoV25`, `glm5vTurbo`
+1. Request override: `metadata.astrolabe.stack`
+2. API-key assignment
+3. Workspace assignment
+4. Managed default
 
-Those candidates only appear when both of these are true:
+The selected stack version is included in route traces and response headers.
 
-- `ASTROLABE_ALLOW_PREVIEW_MODELS=true`
-- `metadata.astrolabe.allow_preview=true`
+## Candidate selection
 
-## Key routing rules
+For virtual models, Astrolabe starts from the routed candidate list for the virtual model. For concrete model requests, Astrolabe starts with that concrete model.
 
-- `deepseekV4Pro` is the first executor for most non-trivial `core_loop`, `planning`, `orchestration`, `coding`, `research`, and `reflection` requests.
-- `m27` remains the conservative fallback and the floor for untrusted content with tools.
-- `grok43` is the active premium Grok agentic/research candidate, replacing `grok420`; it is excluded from `cheap` because reasoning is always active and first-token latency is high.
-- Multimodal inputs promote the `vision` lane.
-- Tool presence alone does not promote `strict-json`.
-- Explicit structured output and schema-sensitive work promote the `strict-json` lane.
-- Inside `strict-json`, `gpt54Nano` gets the first attempt, then concrete validation failure recovers through `glm51`, `deepseekV4Flash`, `m27`, `gpt54Mini`, and `sonnet`.
-- High-stakes or approval-sensitive work promotes the `safe` lane.
-- Untrusted content plus tools cannot stay on cheap weak tiers.
-- Sticky execution can keep the current workhorse stable across active OpenClaw sessions.
-- Deprecated roster entries are raw-only/manual-pin for one transition release and are excluded from virtual lane defaults and fallbacks.
+The stack then applies:
 
-## Profiles and guardrails
+- provider and model allowlists
+- provider and model blocklists
+- required capabilities
+- data and retention policy labels
+- expected cost ceilings
+- quality thresholds
+- latency and reliability preferences
 
-`ASTROLABE_DEFAULT_PROFILE` changes the final route after base lane selection:
+If every candidate is rejected, the request is blocked before provider execution.
 
-- `default`: normal behavior
-- `strict-budget`: allows `deepseekV4Flash` to replace `deepseekV4Pro` or `m27` on cheaper low-risk routes
-- `safe-untrusted`: pair with untrusted-content metadata for stricter safety floors
-- `low-latency`: keeps the same lane logic but still routes onto `m27`
-- `max-capability`: promotes more critical work upward
+## Decision strategy
 
-`ASTROLABE_ROUTING_PROFILE` still adjusts complexity before route resolution:
+Stack objectives include:
 
-- `budget`
-- `balanced`
-- `quality`
+- lowest-cost model that clears the quality bar
+- fastest model that clears the quality bar
+- highest quality within budget
+- fixed priority order
+- custom rules
 
-Additional router controls:
+The stack returns a selected provider, selected model, decision kind, policy status, and candidate explanation.
 
-- `ASTROLABE_ALLOW_PREVIEW_MODELS`
-- `ASTROLABE_STICKY_EXECUTOR_ENABLED`
-- `ASTROLABE_SKIP_LOW_RISK_VERIFIER`
-- `ASTROLABE_SKIP_LOW_RISK_CLASSIFIER`
+## Fallback
 
-## Escalation
+Fallback can be disabled or limited by stack policy.
 
-Astrolabe only escalates non-stream responses.
+When enabled, fallback may run after provider errors, schema failures, or low-confidence verification. Fallback candidates remain constrained by stack boundaries when `fallbackMustStayInPolicy` is enabled.
 
-Important paths:
+## Verification
 
-- `deepseekV4Pro -> m27 -> sonnet` for serious-work fallback
-- `deepseekV4Flash -> gemma431b/grok/m27` for cheap long-context fallback
-- `grok420 -> grok43 -> sonnet` for raw/manual-pinned Grok 4.20 transition fallback
-- `gpt54Nano -> glm51 -> deepseekV4Flash -> m27 -> gpt54Mini -> sonnet` for strict schema recovery
-- `sonnet -> opus47 -> gpt55` for safe-lane escalation
-- Weak cheap tiers such as `gemma431b`, `mistralSmall4`, `grok`, `gpt54Nano`, and `deepseekV4Flash` cannot remain selected for untrusted content with tools
+Verification modes:
 
-## Safety controls
+- `off`
+- `auto`
+- `light`
+- `strict`
+- `strong`
 
-- High-stakes detection can require explicit confirmation.
-- Tool calls are inspected before Astrolabe returns them.
-- Tool governance is capability-driven first and name-inferred only as a fallback.
-- Read-only tool profiles can block mutating tool calls.
-- `external_comms`, `credential_access`, `remote_write`, and `financial_or_destructive` actions require approval.
-- `untrusted_content` blocks those dangerous capabilities outright and forces at least `m27`.
-- Responses file and image URLs can be allowlisted.
+Verification can be configured globally for a stack and separately for schema or high-stakes requests. Request-level metadata can override verification mode for one call.
 
-## Transparency
+## Request overrides
 
-Use:
+Supported request metadata:
 
-- `GET /v1/models`
-- `GET /v1/models?view=raw`
-- `GET /v1/lanes`
+```json
+{
+  "metadata": {
+    "astrolabe": {
+      "stack": "code-agent",
+      "quality": "high",
+      "cost_mode": "balanced",
+      "latency_slo_ms": 3000,
+      "verification": "strict",
+      "fallback": true,
+      "explain": true
+    }
+  }
+}
+```
 
-And inspect response headers:
+See [Request Stack Selection](/routing-stacks/request-selection) for examples.
 
+## Response headers
+
+Important routing headers include:
+
+- `x-astrolabe-cloud-request-id`
+- `x-astrolabe-model`
+- `x-astrolabe-stack-id`
+- `x-astrolabe-stack-name`
+- `x-astrolabe-stack-version`
+- `x-astrolabe-policy-status`
+- `x-astrolabe-decision`
+- `x-astrolabe-selected-provider`
+- `x-astrolabe-selected-model`
 - `x-astrolabe-category`
+- `x-astrolabe-action-class`
+- `x-astrolabe-complexity`
 - `x-astrolabe-lane`
-- `x-astrolabe-initial-model`
-- `x-astrolabe-final-model`
-- `x-astrolabe-route-label`
-- `x-astrolabe-sticky-applied`
-- `x-astrolabe-sticky-reason`
-- `x-astrolabe-verification-skipped`
-- `x-astrolabe-transport-fallback-only`
+- `x-astrolabe-verification-status`
+- `x-astrolabe-confidence-score`
+- `x-astrolabe-estimated-baseline-cost-usd`
+- `x-astrolabe-estimated-savings-usd`
+
+Log the Cloud request id for support and trace lookup.

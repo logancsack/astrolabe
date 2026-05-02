@@ -1,31 +1,64 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Astrolabe API",
-    "version": "0.3.0-beta.0",
-    "description": "OpenClaw-first Responses router for OpenRouter with static manifests, virtual models, and safety policy."
+    "title": "Astrolabe Cloud Gateway API",
+    "version": "1.0.0",
+    "description": "Hosted OpenAI-compatible gateway for Astrolabe Cloud routing stacks, prepaid billing, model selection, and route traces."
   },
   "servers": [
     {
-      "url": "http://localhost:3000",
-      "description": "Local"
+      "url": "https://api.astrolabe.run",
+      "description": "Astrolabe Cloud gateway"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
     },
     {
-      "url": "https://your-app-name.up.railway.app",
-      "description": "Railway"
+      "apiKeyAuth": []
     }
   ],
   "paths": {
     "/health": {
       "get": {
-        "summary": "Health check",
+        "summary": "Gateway liveness",
+        "security": [],
         "responses": {
           "200": {
-            "description": "Healthy service response",
+            "description": "Gateway is reachable.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
+                  "$ref": "#/components/schemas/BasicHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "summary": "Gateway readiness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Gateway is ready for production traffic.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Gateway is reachable but missing required runtime dependencies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
                 }
               }
             }
@@ -35,11 +68,11 @@
     },
     "/v1/models": {
       "get": {
-        "summary": "List Astrolabe models",
-        "description": "Returns virtual Astrolabe models by default. Use `?view=raw` to inspect the static raw roster.",
+        "summary": "List public models",
+        "description": "Returns Astrolabe virtual models and public hosted serving model metadata.",
         "responses": {
           "200": {
-            "description": "Model list",
+            "description": "Model list.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53,10 +86,11 @@
     },
     "/v1/lanes": {
       "get": {
-        "summary": "List lane manifests",
+        "summary": "List virtual routing lanes",
+        "description": "Returns lane manifests for Astrolabe virtual models.",
         "responses": {
           "200": {
-            "description": "Lane list",
+            "description": "Lane list.",
             "content": {
               "application/json": {
                 "schema": {
@@ -71,31 +105,52 @@
     "/v1/responses": {
       "post": {
         "summary": "Create a response",
-        "description": "Primary Astrolabe endpoint. OpenClaw should use this endpoint with `api: openai-responses`.",
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {}
-        ],
+        "description": "Primary Astrolabe Cloud inference endpoint. Supports virtual models, concrete model IDs, routing stack selection, streaming, billing, and route traces.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ResponsesRequest"
+              },
+              "examples": {
+                "default": {
+                  "value": {
+                    "model": "astrolabe/auto",
+                    "input": "Explain routing stacks in one sentence."
+                  }
+                },
+                "specificStack": {
+                  "value": {
+                    "model": "astrolabe/auto",
+                    "input": "Draft a customer-safe incident update.",
+                    "metadata": {
+                      "astrolabe": {
+                        "stack": "customer-data",
+                        "quality": "high",
+                        "verification": "strong"
+                      }
+                    }
+                  }
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Successful JSON or stream response",
+            "description": "Successful JSON or streaming response.",
             "headers": {
-              "x-astrolabe-category": { "schema": { "type": "string" } },
-              "x-astrolabe-lane": { "schema": { "type": "string" } },
-              "x-astrolabe-initial-model": { "schema": { "type": "string" } },
-              "x-astrolabe-final-model": { "schema": { "type": "string" } }
+              "x-astrolabe-cloud-request-id": { "$ref": "#/components/headers/CloudRequestId" },
+              "x-astrolabe-cloud-workspace": { "$ref": "#/components/headers/WorkspaceId" },
+              "x-astrolabe-cloud-key": { "$ref": "#/components/headers/KeyPrefix" },
+              "x-ratelimit-limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "x-ratelimit-remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "x-ratelimit-reset": { "$ref": "#/components/headers/RateLimitReset" },
+              "x-astrolabe-model": { "$ref": "#/components/headers/SelectedModel" },
+              "x-astrolabe-stack-name": { "$ref": "#/components/headers/StackName" },
+              "x-astrolabe-stack-version": { "$ref": "#/components/headers/StackVersion" },
+              "x-astrolabe-policy-status": { "$ref": "#/components/headers/PolicyStatus" }
             },
             "content": {
               "application/json": {
@@ -110,67 +165,64 @@
               }
             }
           },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Invalid API key",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Confirmation or tool policy required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "402": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" },
+          "502": { "$ref": "#/components/responses/Error" }
         }
       }
     },
     "/v1/chat/completions": {
       "post": {
         "summary": "Create a chat completion",
-        "description": "Compatibility adapter over the same Astrolabe runtime used by `/v1/responses`.",
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {}
-        ],
+        "description": "Compatibility endpoint for OpenAI Chat Completions clients. Uses the same Cloud stack, billing, and trace runtime as /v1/responses.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ChatCompletionRequest"
+              },
+              "examples": {
+                "default": {
+                  "value": {
+                    "model": "astrolabe/coding",
+                    "messages": [
+                      {
+                        "role": "user",
+                        "content": "Explain this error."
+                      }
+                    ],
+                    "metadata": {
+                      "astrolabe": {
+                        "stack": "code-agent",
+                        "quality": "high"
+                      }
+                    }
+                  }
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Successful JSON or stream response",
+            "description": "Successful JSON or streaming response.",
             "headers": {
-              "x-astrolabe-category": { "schema": { "type": "string" } },
-              "x-astrolabe-lane": { "schema": { "type": "string" } },
-              "x-astrolabe-initial-model": { "schema": { "type": "string" } },
-              "x-astrolabe-final-model": { "schema": { "type": "string" } }
+              "x-astrolabe-cloud-request-id": { "$ref": "#/components/headers/CloudRequestId" },
+              "x-astrolabe-cloud-workspace": { "$ref": "#/components/headers/WorkspaceId" },
+              "x-astrolabe-cloud-key": { "$ref": "#/components/headers/KeyPrefix" },
+              "x-ratelimit-limit": { "$ref": "#/components/headers/RateLimitLimit" },
+              "x-ratelimit-remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+              "x-ratelimit-reset": { "$ref": "#/components/headers/RateLimitReset" },
+              "x-astrolabe-model": { "$ref": "#/components/headers/SelectedModel" },
+              "x-astrolabe-stack-name": { "$ref": "#/components/headers/StackName" },
+              "x-astrolabe-stack-version": { "$ref": "#/components/headers/StackVersion" },
+              "x-astrolabe-policy-status": { "$ref": "#/components/headers/PolicyStatus" }
             },
             "content": {
               "application/json": {
@@ -185,16 +237,14 @@
               }
             }
           },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "402": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" },
+          "502": { "$ref": "#/components/responses/Error" }
         }
       }
     }
@@ -204,22 +254,89 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "API Key"
+        "bearerFormat": "Astrolabe Cloud API key"
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      }
+    },
+    "headers": {
+      "CloudRequestId": {
+        "description": "Astrolabe Cloud request id for trace lookup and support.",
+        "schema": { "type": "string" }
+      },
+      "WorkspaceId": {
+        "description": "Workspace id associated with the API key.",
+        "schema": { "type": "string" }
+      },
+      "KeyPrefix": {
+        "description": "Non-secret API key prefix.",
+        "schema": { "type": "string" }
+      },
+      "RateLimitLimit": {
+        "description": "Request limit for the current window.",
+        "schema": { "type": "integer" }
+      },
+      "RateLimitRemaining": {
+        "description": "Remaining requests in the current window.",
+        "schema": { "type": "integer" }
+      },
+      "RateLimitReset": {
+        "description": "Rate-limit reset timestamp.",
+        "schema": { "type": "string" }
+      },
+      "SelectedModel": {
+        "description": "Concrete serving model selected by Astrolabe.",
+        "schema": { "type": "string" }
+      },
+      "StackName": {
+        "description": "Routing stack name used for this request.",
+        "schema": { "type": "string" }
+      },
+      "StackVersion": {
+        "description": "Routing stack version used for this request.",
+        "schema": { "type": "string" }
+      },
+      "PolicyStatus": {
+        "description": "Routing stack policy result.",
+        "schema": { "type": "string", "enum": ["passed", "blocked", "not_evaluated"] }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Gateway error.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
       }
     },
     "schemas": {
-      "HealthResponse": {
+      "BasicHealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" }
+        },
+        "required": ["ok"],
+        "additionalProperties": true
+      },
+      "ReadinessResponse": {
         "type": "object",
         "properties": {
           "ok": { "type": "boolean" },
-          "service": { "type": "string" },
-          "version": { "type": "string" },
-          "routing_profile": { "type": "string" },
-          "cost_efficiency_mode": { "type": "string" },
-          "default_profile": { "type": "string" },
-          "responses_enabled": { "type": "boolean" },
-          "chat_completions_enabled": { "type": "boolean" }
+          "mode": { "type": "string" },
+          "service": { "type": "string", "const": "gateway" },
+          "issues": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
         },
+        "required": ["ok", "service", "issues"],
         "additionalProperties": true
       },
       "ListResponse": {
@@ -228,30 +345,33 @@
           "object": { "type": "string" },
           "data": {
             "type": "array",
-            "items": { "type": "object" }
+            "items": { "type": "object", "additionalProperties": true }
           }
+        },
+        "required": ["data"],
+        "additionalProperties": true
+      },
+      "AstrolabeMetadata": {
+        "type": "object",
+        "properties": {
+          "stack": { "type": "string" },
+          "quality": { "type": "string", "enum": ["draft", "standard", "high", "critical"] },
+          "cost_mode": {
+            "type": "string",
+            "enum": ["lowest_passable", "balanced", "fastest_passable", "premium", "fixed"]
+          },
+          "latency_slo_ms": { "type": "integer" },
+          "verification": { "type": "string", "enum": ["off", "auto", "light", "strict", "strong"] },
+          "fallback": { "type": "boolean" },
+          "explain": { "type": "boolean" }
         },
         "additionalProperties": true
       },
-      "ChatCompletionRequest": {
+      "GatewayMetadata": {
         "type": "object",
-        "required": ["messages"],
         "properties": {
-          "model": { "type": "string" },
-          "messages": {
-            "type": "array",
-            "items": { "$ref": "#/components/schemas/ChatMessage" }
-          },
-          "stream": { "type": "boolean", "default": false },
-          "tools": {
-            "type": "array",
-            "items": { "type": "object" }
-          },
-          "tool_choice": {},
-          "response_format": {},
-          "metadata": {
-            "type": "object",
-            "additionalProperties": true
+          "astrolabe": {
+            "$ref": "#/components/schemas/AstrolabeMetadata"
           }
         },
         "additionalProperties": true
@@ -260,13 +380,13 @@
         "type": "object",
         "required": ["input"],
         "properties": {
-          "model": { "type": "string" },
+          "model": { "type": "string", "default": "astrolabe/auto" },
           "input": {},
           "instructions": { "type": "string" },
           "stream": { "type": "boolean", "default": false },
           "tools": {
             "type": "array",
-            "items": { "type": "object" }
+            "items": { "type": "object", "additionalProperties": true }
           },
           "tool_choice": {},
           "response_format": {},
@@ -274,8 +394,29 @@
           "text": {},
           "max_output_tokens": { "type": "integer" },
           "metadata": {
-            "type": "object",
-            "additionalProperties": true
+            "$ref": "#/components/schemas/GatewayMetadata"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ChatCompletionRequest": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "model": { "type": "string", "default": "astrolabe/auto" },
+          "messages": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ChatMessage" }
+          },
+          "stream": { "type": "boolean", "default": false },
+          "tools": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "tool_choice": {},
+          "response_format": {},
+          "metadata": {
+            "$ref": "#/components/schemas/GatewayMetadata"
           }
         },
         "additionalProperties": true
@@ -295,12 +436,13 @@
           "id": { "type": "string" },
           "object": { "type": "string" },
           "created": { "type": "integer" },
+          "model": { "type": "string" },
           "choices": {
             "type": "array",
-            "items": { "type": "object" }
+            "items": { "type": "object", "additionalProperties": true }
           },
-          "usage": { "type": "object" },
-          "astrolabe": { "type": "object" }
+          "usage": { "type": "object", "additionalProperties": true },
+          "astrolabe": { "type": "object", "additionalProperties": true }
         },
         "additionalProperties": true
       },
@@ -311,12 +453,13 @@
           "object": { "type": "string" },
           "created": { "type": "integer" },
           "status": { "type": "string" },
+          "model": { "type": "string" },
           "output": {
             "type": "array",
-            "items": { "type": "object" }
+            "items": { "type": "object", "additionalProperties": true }
           },
-          "usage": { "type": "object" },
-          "metadata": { "type": "object" }
+          "usage": { "type": "object", "additionalProperties": true },
+          "metadata": { "type": "object", "additionalProperties": true }
         },
         "additionalProperties": true
       },
@@ -326,13 +469,16 @@
           "error": {
             "type": "object",
             "properties": {
+              "code": { "type": "string" },
               "message": { "type": "string" },
-              "type": { "type": "string" },
-              "code": { "type": ["string", "null"] }
+              "requestId": { "type": "string" },
+              "details": {}
             },
+            "required": ["code", "message"],
             "additionalProperties": true
           }
         },
+        "required": ["error"],
         "additionalProperties": true
       }
     }

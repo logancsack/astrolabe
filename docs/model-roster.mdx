@@ -1,68 +1,66 @@
 ---
-title: "Model Roster Reference"
-description: "Static Astrolabe roster, aliases, and role assignments."
+title: "Model Roster"
+description: "Public virtual models and hosted model roles available through Astrolabe Cloud."
 ---
 
-Astrolabe uses a static checked-in roster. Runtime routing does not depend on live discovery.
+Astrolabe Cloud exposes stable virtual model IDs while the hosted roster can evolve behind the gateway.
 
-OpenRouter is the maintainer reference for model IDs and pricing, but the active roster is whatever Astrolabe ships in `src/manifests/index.js`.
-
-## Core roster
-
-| Key | Model ID | Role |
-| --- | --- | --- |
-| `deepseekV4Pro` | `deepseek/deepseek-v4-pro` | First serious-work default for `auto` and `coding` |
-| `deepseekV4Flash` | `deepseek/deepseek-v4-flash` | Cheap long-context, coding fallback, and schema recovery |
-| `m27` | `minimax/minimax-m2.7` | Conservative serious-work fallback and safety floor |
-| `mimoV25Pro` | `xiaomi/mimo-v2.5-pro` | Long-context coding/research challenger |
-| `kimiK26` | `moonshotai/kimi-k2.6` | Multimodal and visual coding specialist |
-| `glm51` | `z-ai/glm-5.1` | Strict JSON, tool, and schema-repair specialist |
-| `grok` | `x-ai/grok-4.1-fast` | Cheap long-context tool-capable model |
-| `grok43` | `x-ai/grok-4.3` | Premium agentic, instruction-following, and research candidate |
-| `qwen36Plus` | `qwen/qwen3.6-plus` | Long-context multimodal research and vision default |
-| `gemma431b` | `google/gemma-4-31b-it` | Cheapest active multimodal generalist |
-| `mistralSmall4` | `mistralai/mistral-small-2603` | Active cheap multimodal fallback |
-| `gpt54` | `openai/gpt-5.4` | Cross-family verifier or premium executor |
-| `gpt54Mini` | `openai/gpt-5.4-mini` | Cheap control-plane and verifier role |
-| `gpt54Nano` | `openai/gpt-5.4-nano` | Active nano alias, cheap schema/control model |
-| `gpt55` | `openai/gpt-5.5` | Premium frontier escalation |
-| `sonnet` | `anthropic/claude-sonnet-4.6` | Safe-lane default and premium escalation |
-| `opus47` | `anthropic/claude-opus-4.7` | Final safe-lane escalation before GPT-5.5 |
-
-Raw-only transition keys remain requestable by raw key or model ID for one release, but are removed from virtual lane defaults and fallbacks: `gpt5Nano`, `m25`, `kimiK25`, `kimiThinking`, `glm5`, `grok420`, `qwen35Plus`, `qwen35Flash`, `qwenCoderNext`, `gem25Pro`, `gem25FlashLite`, and `opus`.
-
-Preview/evaluation keys remain gated by preview routing: `gem31Pro`, `gem31ProTools`, `mimoV25`, and `glm5vTurbo`.
-
-## Compatibility aliases
-
-| Alias | Resolves To |
-| --- | --- |
-| `nano` | `gpt54Nano` |
-| `mini` | `gpt54Mini` |
-| `gemFlash` | `gem25FlashLite` |
-| `grok41Fast` | `grok` |
+Use virtual models for most traffic. Request a concrete model only when you want to bypass virtual lane selection while still keeping Cloud auth, billing, stack policy, and traces.
 
 ## Virtual models
 
-These are the recommended public-facing models for OpenClaw users:
+| Model | Purpose |
+| --- | --- |
+| `astrolabe/auto` | Default route for general AI API requests. |
+| `astrolabe/coding` | Code generation, patching, repo work, and agent execution traces. |
+| `astrolabe/research` | Long-context synthesis, source-heavy research, and deep reasoning. |
+| `astrolabe/vision` | Screenshots, documents, image-grounded reasoning, and multimodal tasks. |
+| `astrolabe/strict-json` | Structured output and schema recovery. |
+| `astrolabe/cheap` | Low-risk, high-efficiency turns. |
+| `astrolabe/safe` | High-stakes routes with conservative premium defaults. |
 
-- `astrolabe/auto`
-- `astrolabe/coding`
-- `astrolabe/research`
-- `astrolabe/vision`
-- `astrolabe/strict-json`
-- `astrolabe/cheap`
-- `astrolabe/safe`
+Short aliases such as `auto`, `coding`, and `cheap` normalize to their `astrolabe/...` model IDs.
 
-## Roster policy
+## Active hosted roster
 
-- Each model must earn an active slot on cost, capability, and recency. Models more than two generations old should be raw-only unless they provide a uniquely cheap role.
-- `deepseekV4Pro` is the first serious-work default.
-- `m27` remains the conservative fallback and safety-floor workhorse.
-- `grok43` earns an active slot as the premium Grok research and agentic candidate, replacing `grok420` in active routing. It is not a cheap-lane model because reasoning is always active and latency is materially higher than the fast value tier.
-- `gpt-5.4-nano` owns the active nano/control alias.
-- Kimi, GLM, Qwen, MiMo, and Gemma stay first-class specialists where they win on benchmarks or price.
-- Preview and experimental models are opt-in and excluded from default lane manifests.
-- Rejected older models stay in `raw_only` for one transition release, then should be removed unless a maintainer re-approves a manual-pin reason.
-- Raw model additions should be checked into the manifest explicitly.
-- Use `npm run validate:models` to compare the static manifest against OpenRouter before releasing roster changes.
+Astrolabe Cloud maintains a hosted pricing catalog. The current public serving roster includes:
+
+| Model ID | Role |
+| --- | --- |
+| `deepseek/deepseek-v4-pro` | Workhorse for `auto`, `coding`, and `research`. |
+| `minimax/minimax-m2.7` | Conservative workhorse and safety fallback. |
+| `xiaomi/mimo-v2.5-pro` | Coding and research specialist. |
+| `qwen/qwen3.6-plus` | Long-context research and vision candidate. |
+| `moonshotai/kimi-k2.6` | Multimodal and visual coding specialist. |
+| `anthropic/claude-sonnet-4.6` | Safe-lane default and premium escalation. |
+| `z-ai/glm-5.1` | Strict JSON and schema repair specialist. |
+| `deepseek/deepseek-v4-flash` | Low-cost coding and structured-output fallback. |
+| `mistralai/mistral-small-2603` | Value multimodal fallback. |
+| `x-ai/grok-4.1-fast` | Low-cost long-context and tool-capable model. |
+| `x-ai/grok-4.3` | Premium research and agentic candidate. |
+| `openai/gpt-5.4` | Premium verifier or executor. |
+| `anthropic/claude-opus-4.7` | Safe-lane escalation. |
+| `openai/gpt-5.5` | Frontier escalation. |
+| `google/gemma-4-31b-it` | Cheap multimodal generalist. |
+| `openai/gpt-5.4-nano` | Control-plane, router, and structured-output model. |
+| `openai/gpt-5.4-mini` | Mid-premium structured and safe-lane option. |
+
+## Pricing
+
+Retail prices are returned by `GET /v1/models` and reflected in the Cloud app pricing views. Billing uses provider-confirmed usage where available.
+
+Routing model costs are internal to Astrolabe. Customer debits are based on serving or fallback model usage that is billable.
+
+## Choosing models
+
+Use:
+
+- `astrolabe/auto` for most traffic
+- `astrolabe/coding` for code editing and tool loops
+- `astrolabe/research` for synthesis and long-context analysis
+- `astrolabe/vision` for visual or document-grounded requests
+- `astrolabe/strict-json` for schema-sensitive requests
+- `astrolabe/cheap` for low-risk volume
+- `astrolabe/safe` for sensitive or high-stakes flows
+
+Use routing stacks to further constrain providers, models, cost mode, quality target, and verification.

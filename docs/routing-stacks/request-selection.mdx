@@ -1,0 +1,96 @@
+---
+title: "Request Stack Selection"
+description: "Select a specific routing stack and set request-level routing preferences."
+---
+
+Use `metadata.astrolabe.stack` to select a stack for one request.
+
+The value is a stack slug, such as `code-agent`, `customer-data`, or a custom stack slug from your workspace.
+
+## Selection precedence
+
+Astrolabe resolves stacks in this order:
+
+1. `metadata.astrolabe.stack`
+2. API-key assignment
+3. Workspace assignment
+4. Managed default
+
+The request override wins only for that request.
+
+## Supported request metadata
+
+Astrolabe reads these fields from `metadata.astrolabe`:
+
+| Field | Type | Effect |
+| --- | --- | --- |
+| `stack` | string | Selects a stack slug for this request. |
+| `quality` | string | Overrides the stack quality target. Values include `draft`, `standard`, `high`, and `critical`. |
+| `cost_mode` | string | Overrides the stack cost mode. Values include `lowest_passable`, `balanced`, `fastest_passable`, `premium`, and `fixed`. |
+| `latency_slo_ms` | number | Sets a request-level latency target in milliseconds. |
+| `verification` | string | Overrides verification mode. Values include `off`, `auto`, `light`, `strict`, and `strong`. |
+| `fallback` | boolean | Enables or disables fallback for this request. |
+| `explain` | boolean | Requests richer decision metadata where supported. |
+
+## Responses example
+
+```bash
+curl https://api.astrolabe.run/v1/responses \
+  -H "Authorization: Bearer $ASTROLABE_CLOUD_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "astrolabe/auto",
+    "input": "Review this incident summary and draft an executive update.",
+    "metadata": {
+      "astrolabe": {
+        "stack": "high-quality",
+        "quality": "high",
+        "cost_mode": "balanced",
+        "verification": "auto",
+        "fallback": true,
+        "explain": true
+      }
+    }
+  }'
+```
+
+## Chat Completions example
+
+```bash
+curl https://api.astrolabe.run/v1/chat/completions \
+  -H "Authorization: Bearer $ASTROLABE_CLOUD_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "astrolabe/coding",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Find the likely cause of this TypeScript error."
+      }
+    ],
+    "metadata": {
+      "astrolabe": {
+        "stack": "code-agent",
+        "quality": "high",
+        "verification": "strict"
+      }
+    }
+  }'
+```
+
+## Error behavior
+
+If the stack slug is unknown, inactive, or not available to the workspace, Astrolabe returns a stack resolution error before provider execution.
+
+If the stack exists but policy boundaries reject every candidate, Astrolabe returns:
+
+```json
+{
+  "error": {
+    "code": "routing_policy_blocked",
+    "message": "No allowed model candidates remain after applying routing stack boundaries."
+  }
+}
+```
+
+Use the request id and route trace to inspect rejected candidates.

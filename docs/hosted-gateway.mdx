@@ -1,0 +1,55 @@
+---
+title: "Hosted Gateway"
+description: "Use Astrolabe Cloud's hosted API gateway for production AI traffic."
+---
+
+Astrolabe Cloud provides a hosted gateway at:
+
+```text
+https://api.astrolabe.run/v1
+```
+
+The gateway is OpenAI-compatible for the public inference surface and adds Cloud-specific routing, billing, stack policy, and observability.
+
+## Public endpoints
+
+- `GET /health`
+- `GET /ready`
+- `GET /v1/models`
+- `GET /v1/lanes`
+- `POST /v1/responses`
+- `POST /v1/chat/completions`
+
+## Authentication
+
+Create API keys in the Cloud app. Send a key with either:
+
+```bash
+Authorization: Bearer $ASTROLABE_CLOUD_KEY
+```
+
+or:
+
+```bash
+x-api-key: $ASTROLABE_CLOUD_KEY
+```
+
+Keys belong to a workspace and can be revoked from the dashboard.
+
+## Gateway behavior
+
+The gateway:
+
+- rejects missing or invalid keys
+- rejects suspended workspaces or revoked keys
+- enforces key-level rate limits
+- requires sufficient prepaid balance before routing
+- resolves stack policy before provider calls
+- records route traces and model-call records
+- returns Cloud request ids and routing headers
+
+## Compatibility
+
+Use `POST /v1/responses` for new integrations. Use `POST /v1/chat/completions` when an existing client only supports Chat Completions.
+
+Both endpoints use the same stack, billing, and routing runtime.

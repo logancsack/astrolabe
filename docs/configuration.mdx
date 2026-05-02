@@ -1,85 +1,118 @@
 ---
 title: "Configuration"
-description: "Configure Astrolabe profiles, safety controls, and Responses policy."
+description: "Configure Astrolabe Cloud through workspace keys, billing, stack assignment, and custom stack policy."
 ---
 
-Astrolabe is configured entirely with environment variables.
+Astrolabe Cloud configuration lives in the Cloud app and request metadata.
 
-## Required
+Most teams configure defaults in the dashboard, then use request metadata only when a workflow needs a different stack or temporary routing preference.
 
-- `OPENROUTER_API_KEY`
-- `ASTROLABE_API_KEY`
+## Workspace setup
 
-## Main runtime toggles
+Each workspace has:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ASTROLABE_RESPONSES_ENABLED` | `true` | Enables `POST /v1/responses` |
-| `ASTROLABE_CHAT_COMPLETIONS_ENABLED` | `true` | Enables `POST /v1/chat/completions` |
-| `ASTROLABE_DEFAULT_PROFILE` | `default` | Final routing posture |
-| `ASTROLABE_ROUTING_PROFILE` | `budget` | Complexity adjustment before lane selection |
-| `ASTROLABE_COST_EFFICIENCY_MODE` | `strict` | Legacy cost guardrail mode |
+- status: active or suspended
+- prepaid credit balance
+- low-balance threshold
+- API keys
+- usage ledger
+- routing stacks
+- stack assignments
+- route traces
 
-## Safety controls
+Requests require an active workspace and enough available prepaid balance.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ASTROLABE_ENABLE_SAFETY_GATE` | `true` | Enables high-stakes detection |
-| `ASTROLABE_HIGH_STAKES_CONFIRM_MODE` | `prompt` | `prompt`, `strict`, or `off` |
-| `ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN` | `confirm` | Confirmation token used in strict mode |
-| `ASTROLABE_RESPONSES_FILES_URL_ALLOWLIST` | empty | Comma-separated hosts/origins for file URLs |
-| `ASTROLABE_RESPONSES_IMAGES_URL_ALLOWLIST` | empty | Comma-separated hosts/origins for image URLs |
-| `ASTROLABE_RESPONSES_MAX_URL_PARTS` | `12` | Upper bound for URL-bearing Responses parts |
+## API keys
 
-## Rate limiting
+Create keys in the Cloud app.
 
-| Variable | Default |
-| --- | --- |
-| `ASTROLABE_RATE_LIMIT_ENABLED` | `false` |
-| `ASTROLABE_RATE_LIMIT_WINDOW_MS` | `60000` |
-| `ASTROLABE_RATE_LIMIT_MAX_REQUESTS` | `120` |
+Keys can be:
 
-## Control-plane model knobs
+- active
+- revoked
+- assigned to a specific routing stack
+- used to separate environments, apps, customers, or workflows
 
-| Variable | Default |
-| --- | --- |
-| `ASTROLABE_CLASSIFIER_MODEL_KEY` | `nano` |
-| `ASTROLABE_SELF_CHECK_MODEL_KEY` | `mini` |
-| `ASTROLABE_CONTEXT_MESSAGES` | `8` |
-| `ASTROLABE_CONTEXT_CHARS` | `2500` |
+Use key assignment when a service should always route through a specific stack.
 
-## Force mode
+## Billing
 
-`ASTROLABE_FORCE_MODEL` pins every request to one upstream model ID and bypasses normal routing and verifier escalation.
+Billing uses prepaid credits.
 
-## Recommended defaults
+Available packs:
 
-For most OpenClaw users:
+- `$10`
+- `$25`
+- `$50`
+- `$100`
+- `$250`
+- `$500`
 
-```env
-ASTROLABE_RESPONSES_ENABLED=true
-ASTROLABE_CHAT_COMPLETIONS_ENABLED=true
-ASTROLABE_DEFAULT_PROFILE=default
-ASTROLABE_ROUTING_PROFILE=budget
-ASTROLABE_ENABLE_SAFETY_GATE=true
-ASTROLABE_HIGH_STAKES_CONFIRM_MODE=prompt
+The gateway reserves balance before provider execution and finalizes the exact debit after usage is known.
+
+## Stack assignment
+
+Use assignment to choose defaults:
+
+- Workspace assignment applies to every key unless the key has its own assignment.
+- API-key assignment applies to requests made with that key.
+- Request metadata can select a stack for one call.
+
+Resolution order is:
+
+1. `metadata.astrolabe.stack`
+2. API-key assignment
+3. Workspace assignment
+4. Managed default
+
+## Stack policy
+
+Custom stacks can configure:
+
+- allowed and blocked providers
+- allowed and blocked models
+- required capabilities
+- data and retention policy labels
+- quality target
+- cost mode
+- latency SLO
+- reliability target
+- maximum expected cost
+- fallback policy
+- verification policy
+- budget limits
+- memory behavior
+- observability behavior
+
+See [Customize Stacks](/routing-stacks/customization).
+
+## Request-level overrides
+
+Use request metadata for one-off changes:
+
+```json
+{
+  "metadata": {
+    "astrolabe": {
+      "stack": "customer-data",
+      "quality": "high",
+      "cost_mode": "balanced",
+      "verification": "strong",
+      "fallback": true
+    }
+  }
+}
 ```
 
-For the cheapest possible setup:
+Supported fields are documented in [Request Stack Selection](/routing-stacks/request-selection).
 
-```env
-ASTROLABE_DEFAULT_PROFILE=strict-budget
-```
+## Operational verification
 
-For faster turn latency:
+After changing configuration:
 
-```env
-ASTROLABE_DEFAULT_PROFILE=low-latency
-```
-
-For higher assurance on sensitive automation:
-
-```env
-ASTROLABE_DEFAULT_PROFILE=safe-untrusted
-ASTROLABE_HIGH_STAKES_CONFIRM_MODE=strict
-```
+1. Send one request through the relevant API key.
+2. Confirm `x-astrolabe-stack-name` and `x-astrolabe-stack-version`.
+3. Confirm `x-astrolabe-policy-status` is `passed`.
+4. Open the route trace for `x-astrolabe-cloud-request-id`.
+5. Check selected and rejected candidates.
+6. Check the usage ledger entry after billing finalizes.

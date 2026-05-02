@@ -1,62 +1,75 @@
 ---
-title: "How Astrolabe Works"
-description: "Responses-first architecture, lane routing, safety checks, and fallback behavior."
+title: "How Astrolabe Cloud Works"
+description: "Hosted request lifecycle, stack resolution, billing, fallback, and traceability."
 ---
 
-Astrolabe is the decision layer between OpenClaw and OpenRouter.
+Astrolabe Cloud sits between your application and upstream model providers. Your app talks to one OpenAI-compatible gateway, and Astrolabe handles key validation, balance reservation, stack policy, provider execution, usage billing, and observability.
 
-It does not just forward requests. It classifies the work, chooses a lane, picks the cheapest acceptable candidate set, enforces safety rules, and only then executes upstream.
+## System map
+
+Astrolabe Cloud has four production surfaces:
+
+1. **Cloud app** at `https://app.astrolabe.run` for workspace setup, API keys, billing, routing stacks, usage, and traces.
+2. **Gateway** at `https://api.astrolabe.run/v1` for model requests.
+3. **Control plane** for workspace state, API key mirrors, billing ledger, stack versions, and trace records.
+4. **Provider layer** through OpenRouter for concrete model execution.
 
 ## Request lifecycle
 
-For each request:
+For `POST /v1/responses` and `POST /v1/chat/completions`:
 
-1. normalize the request into a shared internal format
-2. extract conversation and tool features
-3. detect high-stakes signals
-4. classify category and complexity
-5. derive route modifiers such as `multimodal`, `tool_heavy`, or `strict_json`
-6. choose a lane
-7. select candidates from the static manifest
-8. execute against OpenRouter
-9. verify non-stream results and optionally escalate once
-10. inspect outbound tool calls before returning them
+1. The gateway extracts the API key from `Authorization: Bearer ...` or `x-api-key`.
+2. The key is resolved to a workspace and key prefix.
+3. Rate limits are checked for the key.
+4. Astrolabe estimates request size and reserves prepaid workspace balance.
+5. The requested model is normalized. Virtual aliases such as `auto` resolve to `astrolabe/auto`.
+6. The gateway resolves the active routing stack.
+7. The stack applies boundaries, objectives, fallback policy, verification settings, and request overrides.
+8. Astrolabe selects a concrete serving model and calls OpenRouter.
+9. Fallback, verification, schema recovery, or policy blocking may run depending on the stack and response.
+10. Usage is finalized from provider usage where available.
+11. Billing, model-call records, and route traces are written back to the control plane.
+12. The response returns with Cloud, stack, model, policy, rate-limit, and request-id headers.
 
-## Primary interface
+## Stack resolution
 
-Astrolabe is now Responses-first:
+Astrolabe chooses a stack in this order:
 
-- `POST /v1/responses` is the primary endpoint
-- `POST /v1/chat/completions` is a compatibility adapter
+1. `metadata.astrolabe.stack` on the request.
+2. Stack assigned to the API key.
+3. Stack assigned to the workspace.
+4. Managed default stack.
 
-Both endpoints run through the same routing engine.
+If a requested stack slug does not exist or is not active for the workspace, the gateway returns a stack resolution error before provider execution.
 
-## Workhorse and specialists
+## Billing model
 
-- `deepseekV4Pro` is the first serious-work default for `auto` and `coding`
-- `m27` is the conservative fallback and safety-floor workhorse
-- `deepseekV4Flash` handles cheap long-context fallback and strict-schema recovery
-- `qwen36Plus`, `kimiK26`, `gemma431b`, and `mistralSmall4` handle multimodal routing by capability and cost
-- `grok43` is the premium Grok research/agentic candidate; it is available for long-context multimodal work but is kept out of the cheap and safe lanes
-- `glm51` handles strict JSON and tool/schema-sensitive recovery
-- `sonnet`, `opus47`, and `gpt55` own the safe escalation path
+Astrolabe Cloud uses prepaid credits.
 
-Older rejected roster entries remain raw-only/manual-pin for one transition release. They are visible in `GET /v1/models?view=raw` under `raw_only`, but they are not used by virtual lane defaults or fallbacks.
+- A request must pass auth, workspace status, and balance checks before provider work starts.
+- Astrolabe reserves enough balance for the selected route.
+- Successful provider usage becomes the customer debit.
+- Failed, rejected, duplicate, unpriced, or missing-usage requests are recorded as unbillable.
+- Route traces and usage rows remain available for debugging.
 
-## Safety model
+## What clients can observe
 
-Astrolabe adds policy on top of raw model execution:
+Log `x-astrolabe-cloud-request-id` for every request. It is the primary support and trace lookup key.
 
-- high-stakes confirmation mode
-- untrusted-content safety floors
-- tool-call approval or blocking
-- URL allowlists for Responses file/image inputs
+Response headers can expose:
 
-## Transparency
+- workspace and key prefix
+- rate-limit state
+- selected model and provider
+- stack id, name, and version
+- policy status and decision kind
+- category, action class, complexity, and lane
+- verification status and confidence
+- estimated baseline cost and estimated savings
 
-Astrolabe exposes its behavior through:
+## Deep references
 
-- `GET /v1/models`
-- `GET /v1/lanes`
-- `x-astrolabe-*` headers
-- inline Astrolabe metadata on JSON responses
+- [Routing Stack Concepts](/routing-stacks/concepts)
+- [Request Stack Selection](/routing-stacks/request-selection)
+- [Routing Reference](/routing-reference)
+- [API Reference](/api-reference/introduction)

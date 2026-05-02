@@ -1,8 +1,8 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Astrolabe",
-  "description": "Smart model routing for OpenClaw with OpenRouter.",
+  "name": "Astrolabe Cloud",
+  "description": "Hosted AI routing, billing, observability, and stack control for production AI APIs.",
   "colors": {
     "primary": "#0055FF",
     "light": "#4D8DFF",
@@ -34,19 +34,27 @@
             "group": "Getting started",
             "pages": [
               "index",
+              "quickstart",
               "how-it-works",
-              "quickstart"
+              "hosted-gateway"
             ]
           },
           {
-            "group": "Using Astrolabe",
+            "group": "Routing stacks",
             "pages": [
-              "openclaw",
-              "deploy/railway"
+              "routing-stacks/concepts",
+              "routing-stacks/customization",
+              "routing-stacks/request-selection"
             ]
           },
           {
-            "group": "Operations",
+            "group": "Integrations",
+            "pages": [
+              "openclaw"
+            ]
+          },
+          {
+            "group": "Reference",
             "pages": [
               "model-roster",
               "routing-reference",
@@ -60,16 +68,48 @@
         "tab": "API reference",
         "groups": [
           {
-            "group": "Endpoints",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction",
+              "api-reference/introduction"
+            ]
+          },
+          {
+            "group": "Gateway endpoints",
+            "pages": [
               "api-reference/endpoint/responses",
               "api-reference/endpoint/chat-completions"
             ]
           }
         ]
       }
-    ]
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Astrolabe",
+          "href": "https://astrolabe.run",
+          "icon": "house"
+        },
+        {
+          "anchor": "Cloud app",
+          "href": "https://app.astrolabe.run",
+          "icon": "cloud"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Support",
+        "href": "mailto:support@astrolabe.run"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Open app",
+      "href": "https://app.astrolabe.run"
+    }
   },
   "logo": {
     "light": "/logo/astrolabe-horiz-light.png",
@@ -86,5 +126,10 @@
       "cursor",
       "vscode"
     ]
+  },
+  "footer": {
+    "socials": {
+      "website": "https://astrolabe.run"
+    }
   }
 }

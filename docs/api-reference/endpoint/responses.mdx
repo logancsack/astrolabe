@@ -3,23 +3,30 @@ title: "Responses"
 openapi: "POST /v1/responses"
 ---
 
-`POST /v1/responses` is the primary Astrolabe API.
+`POST /v1/responses` is the recommended Astrolabe Cloud inference endpoint for new integrations.
 
-This is the recommended endpoint for OpenClaw.
+It accepts OpenAI-style Responses payloads and adds Cloud routing, billing, stack policy, fallback, verification, and traceability.
 
-## What Astrolabe adds
+## Recommended request
 
-- virtual model routing
-- lane selection
-- fallback and retry handling
-- verifier-driven escalation for non-stream requests
-- tool-policy checks
-- untrusted-content safety floors
+```json
+{
+  "model": "astrolabe/auto",
+  "input": "Summarize this support conversation.",
+  "metadata": {
+    "astrolabe": {
+      "stack": "customer-data",
+      "quality": "high",
+      "verification": "auto"
+    }
+  }
+}
+```
 
-## Recommended request shape
+## Streaming
 
-- `model: "astrolabe/auto"`
-- `input: "..."`
-- `stream: false` unless you need SSE
+Set `stream: true` for server-sent events. Streaming responses still include Cloud request, stack, model, and rate-limit headers.
 
-You can also use specialist virtual models like `astrolabe/coding` or `astrolabe/strict-json`.
+## Billing
+
+The gateway reserves prepaid balance before provider execution and finalizes the debit from provider usage where available.

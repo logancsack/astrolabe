@@ -1,0 +1,82 @@
+---
+title: "Routing Stack Concepts"
+description: "How Astrolabe Cloud uses managed and custom stacks to choose models."
+---
+
+A routing stack is the policy object Astrolabe Cloud applies before a request reaches an upstream model.
+
+Stacks decide which providers and models are allowed, what quality bar must be met, how aggressively to optimize cost or latency, how fallback works, and how much trace data should be persisted.
+
+## Managed stacks
+
+Managed stacks are Astrolabe-maintained templates. They are useful when you want sane production defaults without owning every routing detail.
+
+Current managed stack slugs include:
+
+- `default-optimizer`
+- `low-cost`
+- `high-quality`
+- `fast`
+- `strict-json`
+- `customer-data`
+- `high-stakes`
+- `code-agent`
+- `research`
+
+Managed stacks can be used directly or cloned into a custom stack when you need explicit workspace policy.
+
+## Custom stacks
+
+Custom stacks belong to your workspace. They let you make routing policy concrete:
+
+- allowed and blocked providers
+- allowed and blocked models
+- required model capabilities
+- data and retention policy labels
+- quality target
+- cost mode
+- latency SLO
+- fallback policy
+- verification mode
+- budget guardrails
+- memory and trace settings
+
+Each custom stack has versions. Publish the version you want traffic to use.
+
+## Assignment levels
+
+Astrolabe resolves a stack in this order:
+
+1. Request override with `metadata.astrolabe.stack`
+2. API-key assignment
+3. Workspace assignment
+4. Managed default
+
+Use workspace assignment for global defaults, API-key assignment for app or environment-specific behavior, and request overrides for one-off workflow control.
+
+## What a stack decision produces
+
+A stack decision includes:
+
+- selected provider
+- selected concrete model
+- decision kind
+- decision reason
+- policy status
+- quality target
+- cost mode
+- fallback mode
+- verification mode
+- accepted candidates
+- rejected candidates
+- estimated selected cost
+- estimated baseline cost
+- estimated savings
+
+These details appear in response headers and route traces when observability is enabled.
+
+## Related pages
+
+- [Customize Stacks](/routing-stacks/customization)
+- [Request Stack Selection](/routing-stacks/request-selection)
+- [Routing Reference](/routing-reference)

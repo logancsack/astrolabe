@@ -3,17 +3,31 @@ title: "Chat Completions"
 openapi: "POST /v1/chat/completions"
 ---
 
-`POST /v1/chat/completions` is the compatibility endpoint.
+`POST /v1/chat/completions` is the compatibility endpoint for clients that still use OpenAI Chat Completions.
 
-Use it when you have an OpenAI chat-completions client that you do not want to change yet.
+It uses the same Cloud auth, stack resolution, routing, billing, fallback, verification, and trace runtime as `/v1/responses`.
 
-## Important behavior
+## Recommended request
 
-- Astrolabe still routes through the same engine used by `/v1/responses`.
-- Virtual models like `astrolabe/auto` are supported.
-- Non-stream JSON responses include inline Astrolabe metadata.
-- Streaming responses are passed through as SSE.
+```json
+{
+  "model": "astrolabe/coding",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Explain this build failure in one paragraph."
+    }
+  ],
+  "metadata": {
+    "astrolabe": {
+      "stack": "code-agent",
+      "quality": "high",
+      "fallback": true
+    }
+  }
+}
+```
 
-## Prefer `/v1/responses` for new OpenClaw setups
+## Prefer Responses for new clients
 
-OpenClaw integrations should prefer `api: openai-responses` and `POST /v1/responses`.
+Use `/v1/responses` for new integrations when your client supports it. Keep Chat Completions for existing libraries and compatibility paths.

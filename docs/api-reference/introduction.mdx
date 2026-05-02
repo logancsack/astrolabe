@@ -1,36 +1,104 @@
 ---
-title: "Introduction"
-description: "Astrolabe API surface and auth behavior."
+title: "API Introduction"
+description: "Astrolabe Cloud gateway endpoints, authentication, headers, and error model."
 ---
 
-Astrolabe exposes:
+Astrolabe Cloud exposes an OpenAI-compatible hosted gateway at:
+
+```text
+https://api.astrolabe.run/v1
+```
+
+The gateway supports both Responses and Chat Completions while applying the same Cloud auth, balance, stack, routing, billing, and trace runtime.
+
+## Endpoints
 
 - `GET /health`
+- `GET /ready`
 - `GET /v1/models`
 - `GET /v1/lanes`
 - `POST /v1/responses`
 - `POST /v1/chat/completions`
 
-`/v1/responses` is the primary endpoint.
-
-`/v1/chat/completions` is the compatibility endpoint.
-
 ## Authentication
 
-If `ASTROLABE_API_KEY` is set, send either:
+Send an Astrolabe Cloud workspace API key with one of:
 
-- `Authorization: Bearer <ASTROLABE_API_KEY>`
-- `x-api-key: <ASTROLABE_API_KEY>`
+```bash
+Authorization: Bearer $ASTROLABE_CLOUD_KEY
+```
 
-In production, Astrolabe refuses to start without `ASTROLABE_API_KEY`.
+```bash
+x-api-key: $ASTROLABE_CLOUD_KEY
+```
 
-## Response metadata
+Requests without a valid active key are rejected.
 
-Astrolabe adds route headers such as:
+## Models
 
-- `x-astrolabe-category`
-- `x-astrolabe-lane`
-- `x-astrolabe-initial-model`
-- `x-astrolabe-final-model`
+Use virtual model IDs for most requests:
 
-Non-stream JSON responses also include inline Astrolabe metadata.
+- `astrolabe/auto`
+- `astrolabe/coding`
+- `astrolabe/research`
+- `astrolabe/vision`
+- `astrolabe/strict-json`
+- `astrolabe/cheap`
+- `astrolabe/safe`
+
+Use `GET /v1/models` to inspect the public catalog.
+
+## Stack metadata
+
+Select a stack and set per-request preferences with `metadata.astrolabe`:
+
+```json
+{
+  "metadata": {
+    "astrolabe": {
+      "stack": "code-agent",
+      "quality": "high",
+      "cost_mode": "balanced",
+      "latency_slo_ms": 3000,
+      "verification": "strict",
+      "fallback": true,
+      "explain": true
+    }
+  }
+}
+```
+
+## Response headers
+
+Important headers:
+
+- `x-astrolabe-cloud-request-id`
+- `x-astrolabe-cloud-workspace`
+- `x-astrolabe-cloud-key`
+- `x-ratelimit-limit`
+- `x-ratelimit-remaining`
+- `x-ratelimit-reset`
+- `x-astrolabe-model`
+- `x-astrolabe-stack-id`
+- `x-astrolabe-stack-name`
+- `x-astrolabe-stack-version`
+- `x-astrolabe-policy-status`
+- `x-astrolabe-decision`
+- `x-astrolabe-selected-provider`
+- `x-astrolabe-selected-model`
+
+## Error shape
+
+Errors use:
+
+```json
+{
+  "error": {
+    "code": "payment_required",
+    "message": "Workspace balance must stay above 1.00 USD before routing.",
+    "requestId": "req_..."
+  }
+}
+```
+
+Log the request id for support and route trace lookup.

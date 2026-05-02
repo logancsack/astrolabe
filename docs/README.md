@@ -1,38 +1,33 @@
-# Astrolabe Docs (Mintlify)
+# Astrolabe Cloud Docs
 
-This folder contains the Mintlify documentation site for Astrolabe.
+This folder contains the Mintlify documentation site for Astrolabe Cloud.
 
 ## Documentation intent
 
-The docs are written for two goals at the same time:
+The docs should describe the hosted product first:
 
-1. preserve technical precision (API contracts, routing behavior, env variable semantics)
-2. explain system behavior clearly from first principles (what happens, why it happens, and how to verify it)
+1. Cloud app setup, workspace keys, prepaid billing, and hosted gateway usage
+2. Routing stacks, stack customization, stack assignment, and request-level stack selection
+3. API contracts, response headers, route traces, and support-oriented debugging
 
-If you add or change features, keep both goals in the updated pages.
+If you add or change product behavior, update both the conceptual guide and the relevant API reference page.
 
 ## Page structure expectation
 
 User-facing pages should include:
 
 - purpose and mental model
-- lifecycle or architecture context
-- concrete setup/config steps
+- Cloud setup or request examples
+- stack, billing, or trace behavior when relevant
 - operational verification notes
 
-## Local preview
+## Preview
 
-Run from this folder:
-
-```bash
-npx mint dev
-```
-
-Then open `http://localhost:3000`.
+Run the Mintlify preview command from this folder using the Mintlify CLI available in your environment.
 
 ## Deploy with Mintlify
 
 1. Push this repo to GitHub.
-2. In your Mintlify dashboard, connect the repo.
+2. In the Mintlify dashboard, connect the repo.
 3. Ensure the docs root points to this `docs/` folder.
-4. Push changes to your default branch to publish updates.
+4. Push changes to the publishing branch.

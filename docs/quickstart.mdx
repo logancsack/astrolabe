@@ -1,87 +1,110 @@
 ---
 title: "Quickstart"
-description: "Run Astrolabe locally and verify the new Responses-first OpenClaw flow."
+description: "Create a Cloud key, fund your workspace, and send your first request through Astrolabe Cloud."
 ---
+
+This guide routes one request through the hosted Astrolabe Cloud gateway.
 
 ## Before you start
 
 You need:
 
-- Node.js `>=20`
-- an OpenRouter API key
-- a local checkout of this repo
+- An Astrolabe Cloud account at `https://app.astrolabe.run`
+- A funded workspace balance
+- A workspace API key
 
-## 1. Install
+## 1. Open the Cloud app
 
-```bash
-npm install
-```
+Sign in at `https://app.astrolabe.run`.
 
-## 2. Configure `.env`
+Astrolabe creates or loads your workspace after sign-in. If your workspace is pending access review, complete the access request first.
 
-Copy `.env.example` to `.env` and set:
+## 2. Add prepaid credits
 
-```env
-OPENROUTER_API_KEY=your_openrouter_key_here
-ASTROLABE_API_KEY=set_a_long_random_secret_here
-PORT=3000
-```
+Go to **Billing** and buy a prepaid credit pack.
 
-Generate `ASTROLABE_API_KEY` with:
+Astrolabe reserves balance before each gateway request and finalizes the exact debit after provider usage is known. Requests are rejected before provider work starts when the available balance is too low.
 
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
+## 3. Create an API key
 
-## 3. Start Astrolabe
+Go to **API keys**, create a key, and copy the secret once.
+
+Use it as a bearer token:
 
 ```bash
-npm start
+Authorization: Bearer astrolabe_live_...
 ```
 
-Astrolabe listens on `http://localhost:3000`.
-
-## 4. Check health
+You can also send the same value as:
 
 ```bash
-curl http://localhost:3000/health \
-  -H "Authorization: Bearer your_astrolabe_api_key"
+x-api-key: astrolabe_live_...
 ```
 
-## 5. Test the primary Responses endpoint
+## 4. Send a Responses request
 
 ```bash
-curl -X POST http://localhost:3000/v1/responses \
+curl https://api.astrolabe.run/v1/responses \
+  -H "Authorization: Bearer $ASTROLABE_CLOUD_KEY" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your_astrolabe_api_key" \
-  -d '{"model":"astrolabe/auto","input":"Write a one-line greeting.","stream":false}'
+  -d '{
+    "model": "astrolabe/auto",
+    "input": "Write one sentence explaining routing stacks."
+  }'
 ```
 
-## 6. Inspect route metadata
+Python with the OpenAI client:
 
-Look for:
+```python
+from openai import OpenAI
 
-- `x-astrolabe-category`
-- `x-astrolabe-lane`
-- `x-astrolabe-initial-model`
-- `x-astrolabe-final-model`
-- `x-astrolabe-route-label`
+client = OpenAI(
+    api_key="YOUR_ASTROLABE_CLOUD_KEY",
+    base_url="https://api.astrolabe.run/v1",
+)
 
-For JSON responses, also inspect the inline `astrolabe` metadata block.
+response = client.responses.create(
+    model="astrolabe/auto",
+    input="Route this through my default Astrolabe stack.",
+)
+```
 
-## 7. Optional legacy compatibility test
+## 5. Inspect response headers
+
+Every routed response includes headers you can log for support and analysis:
+
+- `x-astrolabe-cloud-request-id`
+- `x-astrolabe-cloud-workspace`
+- `x-astrolabe-cloud-key`
+- `x-ratelimit-limit`
+- `x-ratelimit-remaining`
+- `x-ratelimit-reset`
+- `x-astrolabe-model`
+- `x-astrolabe-stack-name`
+- `x-astrolabe-stack-version`
+- `x-astrolabe-policy-status`
+
+Additional headers may include category, complexity, lane, selected provider, selected model, confidence, estimated baseline cost, and estimated savings.
+
+## 6. Select a specific stack
+
+Add `metadata.astrolabe.stack` when you want one request to use a specific stack slug:
 
 ```bash
-curl -X POST http://localhost:3000/v1/chat/completions \
+curl https://api.astrolabe.run/v1/responses \
+  -H "Authorization: Bearer $ASTROLABE_CLOUD_KEY" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your_astrolabe_api_key" \
-  -d '{"model":"astrolabe/auto","messages":[{"role":"user","content":"Say hello in one line."}],"stream":false}'
+  -d '{
+    "model": "astrolabe/auto",
+    "input": "Summarize this customer escalation.",
+    "metadata": {
+      "astrolabe": {
+        "stack": "customer-data",
+        "quality": "high",
+        "verification": "strong"
+      }
+    }
+  }'
 ```
 
-## 8. Validate the static roster
-
-```bash
-npm run validate:models
-```
-
-This checks Astrolabe’s checked-in manifest against OpenRouter’s current catalog without changing runtime behavior.
+See [Request Stack Selection](/routing-stacks/request-selection) for the full override contract.
