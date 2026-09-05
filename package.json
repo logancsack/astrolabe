@@ -6,6 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "test:http": "node --test tests/http.test.js tests/streaming.test.js",
+    "test:routing": "node --test tests/routing.test.js",
+    "check": "npm test && npm run validate:models",
+    "benchmark": "node scripts/benchmark-runtime.js",
+    "smoke:production": "node scripts/smoke-production.js",
     "validate:models": "node scripts/validate-model-manifest.js",
     "docs:dev": "cd docs && npx mint dev"
   },

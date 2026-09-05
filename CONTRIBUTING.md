@@ -8,13 +8,15 @@ Thanks for helping improve Astrolabe.
 2. Create a branch from `main`: `git checkout -b feat/your-change`.
 3. Make focused changes.
 4. Test locally:
-   - `npm install`
+   - `npm ci`
    - `npm test`
    - `npm run validate:models`
 5. Open a pull request against `main` with:
    - problem statement
    - summary of changes
    - test evidence
+
+See [Engineering verification](./engineering/verification.md) for isolated worktrees, focused tests, local upstream fixtures, benchmarks, and public production checks.
 
 ## GitHub workflow
 
