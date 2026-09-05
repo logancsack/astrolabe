@@ -1,4 +1,5 @@
 const express = require("express");
+const { pipeline } = require("node:stream/promises");
 const { createRuntime } = require("./runtime");
 const { VERSION } = require("./version");
 
@@ -60,16 +61,23 @@ function createAstrolabeApp(config) {
   async function sendExecutionResult(req, res, executor) {
     const result = await executor(req, res);
     if (result?.data && typeof result.data.pipe === "function") {
+      if (res.destroyed) {
+        result.data.destroy();
+        return;
+      }
       res.status(200);
       res.setHeader("Content-Type", result.headers?.["content-type"] || "text/event-stream; charset=utf-8");
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.setHeader("X-Accel-Buffering", "no");
       if (typeof res.flushHeaders === "function") res.flushHeaders();
-      req.on("close", () => {
-        if (typeof result.data.destroy === "function") result.data.destroy();
-      });
-      result.data.pipe(res);
+      // The response lifetime tracks client disconnects; the request may already be complete.
+      try {
+        await pipeline(result.data, res);
+      } catch (error) {
+        // Pipeline has closed both streams. Never attempt a JSON error after SSE headers.
+        if (!res.destroyed) res.destroy(error);
+      }
       return;
     }
     return res.status(200).json(result);

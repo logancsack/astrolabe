@@ -4,49 +4,24 @@ const http = require("node:http");
 const { PassThrough } = require("node:stream");
 const axios = require("axios");
 
-process.env.ASTROLABE_ENABLE_SAFETY_GATE = "true";
-process.env.ASTROLABE_HIGH_STAKES_CONFIRM_MODE = "strict";
-process.env.ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN = "ultra-confirm";
-process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "test-openrouter-key";
+const { createConfig } = require("../src/config");
+const { createAstrolabeApp } = require("../src/app");
 
-const { app } = require("../server");
+function createTestApp(env = {}) {
+  return createAstrolabeApp(createConfig({
+    OPENROUTER_API_KEY: "test-openrouter-key",
+    ASTROLABE_ENABLE_SAFETY_GATE: "true",
+    ASTROLABE_HIGH_STAKES_CONFIRM_MODE: "strict",
+    ASTROLABE_HIGH_STAKES_CONFIRM_TOKEN: "ultra-confirm",
+    ...env
+  }));
+}
 
-function requestJson(port, { method = "GET", path = "/", body, headers = {} }) {
-  return new Promise((resolve, reject) => {
-    const payload = body == null ? null : JSON.stringify(body);
-    const req = http.request(
-      {
-        hostname: "127.0.0.1",
-        port,
-        method,
-        path,
-        headers: {
-          ...(payload
-            ? {
-                "content-type": "application/json",
-                "content-length": Buffer.byteLength(payload)
-              }
-            : {}),
-          ...headers
-        }
-      },
-      (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          const raw = Buffer.concat(chunks).toString("utf8");
-          resolve({
-            status: res.statusCode,
-            headers: res.headers,
-            body: raw ? JSON.parse(raw) : null
-          });
-        });
-      }
-    );
-    req.on("error", reject);
-    if (payload) req.write(payload);
-    req.end();
-  });
+const { app } = createTestApp();
+
+async function requestJson(port, options) {
+  const response = await requestRaw(port, options);
+  return { ...response, body: response.body ? JSON.parse(response.body) : null };
 }
 
 function requestRaw(port, { method = "GET", path = "/", body, rawBody, headers = {} }) {
@@ -102,30 +77,6 @@ async function withAxiosStub(stub, run) {
   } finally {
     axios.post = original;
   }
-}
-
-function loadServerFresh(env = {}) {
-  const modulePath = require.resolve("../server");
-  const cachedModule = require.cache[modulePath];
-  const previousEnv = {};
-  for (const [key, value] of Object.entries(env)) {
-    previousEnv[key] = process.env[key];
-    if (value == null) delete process.env[key];
-    else process.env[key] = value;
-  }
-  delete require.cache[modulePath];
-  let loaded;
-  try {
-    loaded = require("../server");
-  } finally {
-    for (const [key, value] of Object.entries(previousEnv)) {
-      if (value == null) delete process.env[key];
-      else process.env[key] = value;
-    }
-    delete require.cache[modulePath];
-    if (cachedModule) require.cache[modulePath] = cachedModule;
-  }
-  return loaded;
 }
 
 test("GET /health returns service metadata for the new runtime", async () => {
@@ -251,7 +202,7 @@ test("POST /v1/chat/completions returns JSON error on malformed JSON body", asyn
 });
 
 test("rate limiter blocks over-budget requests before upstream call", { concurrency: false }, async () => {
-  const { app: limitedApp } = loadServerFresh({
+  const { app: limitedApp } = createTestApp({
     ASTROLABE_RATE_LIMIT_ENABLED: "true",
     ASTROLABE_RATE_LIMIT_MAX_REQUESTS: "1",
     ASTROLABE_RATE_LIMIT_WINDOW_MS: "60000",
@@ -649,7 +600,7 @@ test("multimodal requests retry multimodal-capable lane candidates first", { con
 });
 
 test("forced model bypasses classifier and verifier work", { concurrency: false }, async () => {
-  const { app: forcedApp } = loadServerFresh({
+  const { app: forcedApp } = createTestApp({
     ASTROLABE_FORCE_MODEL: "openai/gpt-5-nano"
   });
   const server = forcedApp.listen(0);
@@ -814,7 +765,7 @@ test("strict-json requests try GPT-5.4 Nano first and recover through GLM 5.1", 
 });
 
 test("responses URL allowlists are enforced", { concurrency: false }, async () => {
-  const { app: guardedApp } = loadServerFresh({
+  const { app: guardedApp } = createTestApp({
     ASTROLABE_RESPONSES_IMAGES_URL_ALLOWLIST: "allowed.example"
   });
   const server = guardedApp.listen(0);
@@ -881,6 +832,56 @@ test("streaming chat completions passthrough SSE payload", { concurrency: false 
       assert.match(String(response.headers["content-type"] || ""), /text\/event-stream/i);
       assert.match(response.body, /chatcmpl-stream/);
       assert.match(response.body, /\[DONE\]/);
+    });
+  } finally {
+    server.close();
+  }
+});
+
+for (const api of ["chat/completions", "responses"]) {
+  test(`${api} does not retry permanent upstream authentication errors on another tier`, async () => {
+    const server = app.listen(0);
+    try {
+      let attempts = 0;
+      await withAxiosStub(async () => {
+        attempts += 1;
+        return { status: 401, data: { error: { message: "Invalid upstream key" } } };
+      }, async () => {
+        const response = await requestJson(server.address().port, {
+          method: "POST", path: `/v1/${api}`,
+          body: {
+            model: "astrolabe/coding",
+            ...(api === "responses" ? { input: "Explain this function" } : { messages: [{ role: "user", content: "Explain this function" }] })
+          }
+        });
+        assert.equal(response.status, 401);
+        assert.equal(attempts, 1);
+      });
+    } finally {
+      server.close();
+    }
+  });
+}
+
+test("structured-output detection retains older context and stays isolated between requests", async () => {
+  const server = app.listen(0);
+  try {
+    await withAxiosStub(async () => ({
+      status: 200,
+      data: { object: "chat.completion", choices: [{ message: { role: "assistant", content: '{"score":5,"reason":"ok"}' } }] }
+    }), async () => {
+      for (const [messages, lane] of [
+        [[{ role: "system", content: "Use STRUCTURED\n OUTPUT." }, ...Array.from({ length: 12 }, () => ({ role: "assistant", content: "Earlier conversation." })), { role: "user", content: "Hello" }], "strict-json"],
+        [[{ role: "user", content: "Hello" }], "cheap"]
+      ]) {
+        const response = await requestJson(server.address().port, {
+          method: "POST", path: "/v1/chat/completions", body: { messages }
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["x-astrolabe-lane"], lane);
+        assert.equal(response.body.astrolabe.lane, lane);
+        assert.ok(response.body.astrolabe.candidate_models.includes(response.headers["x-astrolabe-final-model"]));
+      }
     });
   } finally {
     server.close();

@@ -1,6 +1,5 @@
 const {
   CATEGORY_BY_ID,
-  CATEGORY_IDS,
   CATEGORY_POLICIES,
   COMPLEXITY_ORDER,
   ESCALATION_PATH,
@@ -44,9 +43,7 @@ const ARCHITECTURE_SIGNAL_REGEX =
   /\b(architecture|architect|system design|design doc|scalability|migrate|migration|distributed|service boundaries|module boundaries|codebase[-\s]?wide)\b/i;
 const DEEP_ANALYSIS_SIGNAL_REGEX =
   /\b(deep[-\s]?analysis|deep[-\s]?dive|citation|citations|cite|sources?|comparison|compare|comparative|competitive|literature|benchmark|trade[-\s]?off|synthesize)\b/i;
-const TOOL_APPROVAL_REGEX = /\b(delete|erase|destroy|wire|transfer|payment|purchase|buy|sell|password|credential|secret|ssh|terminate|deploy|rollback|production)\b/i;
 const TOOL_MUTATION_REGEX = /\b(delete|write|create|update|deploy|rollback|commit|push|purchase|send|transfer|terminate|execute)\b/i;
-const TOOL_BLOCK_REGEX = /\b(shell|exec|system|browser|web_fetch|web-search|http|curl|wget|powershell|bash)\b/i;
 const URL_SCHEME_REGEX = /^https?:\/\//i;
 const LOW_RISK_CATEGORIES = new Set(["heartbeat", "retrieval", "summarization", "creative", "communication"]);
 const M27_WORKHORSE_CATEGORIES = new Set(["core_loop", "planning", "orchestration", "coding", "research", "reflection"]);
@@ -89,9 +86,6 @@ function safeText(value) {
         if (typeof item.output_text === "string") return item.output_text;
         if (typeof item.arguments === "string") return item.arguments;
         if (typeof item.content === "string") return item.content;
-        if (item.type === "text" && typeof item.text === "string") return item.text;
-        if (item.type === "input_text" && typeof item.text === "string") return item.text;
-        if (item.type === "output_text" && typeof item.text === "string") return item.text;
         if (item.type === "message") return safeText(item.content);
         return "";
       })
@@ -374,23 +368,18 @@ function extractConversationFeatures(messages, body = {}) {
   return stats;
 }
 
-function escapeRegex(text) {
-  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+const CATEGORY_SIGNAL_PATTERNS = new Map(CATEGORY_POLICIES.map((category) => [
+  category.id,
+  category.classifierSignals.map((signal) => ({
+    signal,
+    regex: new RegExp(`\\b${signal.trim().toLowerCase().replace(/_/g, "[\\s_-]*")}\\b`, "i")
+  }))
+]));
 
-function signalToRegex(signal) {
-  const normalized = String(signal || "").trim().toLowerCase().replace(/_/g, "[\\s_-]*");
-  return new RegExp(`\\b${normalized}\\b`, "i");
-}
-
-function collectMatchedSignals(text, signals) {
-  const normalizedText = String(text || "").toLowerCase();
-  const matched = [];
-  for (const signal of signals) {
-    const regex = signalToRegex(signal);
-    if (regex.test(normalizedText)) matched.push(signal);
-  }
-  return dedupe(matched);
+function collectMatchedSignals(text, categoryId) {
+  return (CATEGORY_SIGNAL_PATTERNS.get(categoryId) || [])
+    .filter(({ regex }) => regex.test(text))
+    .map(({ signal }) => signal);
 }
 
 function hasArchitectureSignals(text) {
@@ -437,7 +426,6 @@ function normalizeMessageContent(content) {
     .map((part) => {
       if (!part || typeof part !== "object") return "";
       if (typeof part.text === "string") return part.text;
-      if (part.type === "input_text" && typeof part.text === "string") return part.text;
       if (part.type === "image_url" || part.type === "input_image") return "[image]";
       if (part.type === "input_file") return "[file]";
       return safeText(part);
@@ -656,10 +644,10 @@ function isStrictSchemaFormat(format) {
 }
 
 function hasExplicitStructuredOutputRequest(normalized, hints = {}) {
-  const text = String(normalized.inputText || "").toLowerCase();
+  if (normalized.structuredOutputRequested != null) return normalized.structuredOutputRequested;
   if (isStrictSchemaFormat(normalized.responseFormat)) return true;
   if (hints.requested?.lane === "strict-json") return true;
-  return /\b(json|json schema|schema-safe|structured output|tool arguments|function arguments|llm task|valid json)\b/i.test(text);
+  return /\b(json|json schema|schema-safe|structured output|tool arguments|function arguments|llm task|valid json)\b/i.test(String(normalized.inputText || ""));
 }
 
 function inferActionClass(normalized, hints, features, classification, safetyGate) {
@@ -911,7 +899,7 @@ function createRuntime(config) {
       confidence: 2,
       modifiers,
       reason: `Heuristic fallback for ${category?.name || categoryId}.`,
-      matchedSignals: collectMatchedSignals(combined, category?.classifierSignals || []),
+      matchedSignals: collectMatchedSignals(combined, categoryId),
       highStakes: categoryId === "high_stakes",
       actionClass,
       source: "heuristic"
@@ -1771,6 +1759,8 @@ function createRuntime(config) {
       requestText: lastUserMessage || normalized.inputText
     };
     const hints = inferRouteHints(normalized);
+    // Classifier, action selection, and modifiers all inspect this same immutable input.
+    normalized.structuredOutputRequested = hasExplicitStructuredOutputRequest(normalized, hints);
     const safetyText = `${lastUserMessage}\n${recentContext}`;
     const safetyGate = config.ENABLE_SAFETY_GATE ? detectSafetyGate(safetyText) : { triggered: false, matchedSignals: [], actionLike: false };
     const confirmationRequired =
@@ -1881,7 +1871,7 @@ function createRuntime(config) {
     try {
       execution = await executeAcrossCandidates(sameTierCandidates, normalized.api);
     } catch (error) {
-      if (!widerTransportCandidates.length) throw error;
+      if (!isRetryableModelError(error) || !widerTransportCandidates.length) throw error;
       transportRetried = true;
       execution = await executeAcrossCandidates(widerTransportCandidates, normalized.api);
     }
@@ -2008,6 +1998,7 @@ function createRuntime(config) {
       classification,
       modifiers,
       routeDecision,
+      candidates,
       initialModelId,
       finalModelId,
       finalResult,
@@ -2026,14 +2017,13 @@ function createRuntime(config) {
     };
   }
 
-  async function executeChatRequest(req, res) {
-    const normalized = normalizeChatRequest(req.body || {});
+  async function executeRequest(req, res, normalized) {
     const execution = await executeNormalizedRequest(req, normalized);
-    const metadata = buildAstrolabeMetadata(
+    const metadata = normalized.stream ? null : buildAstrolabeMetadata(
       execution.routeDecision,
       execution.classification,
       execution.modifiers,
-      buildCandidatesForRoute(execution.routeDecision, extractConversationFeatures(normalized.messages, normalized.body), execution.modifiers, inferRouteHints(normalized)),
+      execution.candidates,
       {
         initialModelId: execution.initialModelId,
         finalModelId: execution.finalModelId,
@@ -2071,49 +2061,12 @@ function createRuntime(config) {
     return finalizeExecutionBody(normalized, execution.finalResult, metadata);
   }
 
-  async function executeResponsesRequest(req, res) {
-    const normalized = normalizeResponsesRequest(req.body || {});
-    const execution = await executeNormalizedRequest(req, normalized);
-    const metadata = buildAstrolabeMetadata(
-      execution.routeDecision,
-      execution.classification,
-      execution.modifiers,
-      buildCandidatesForRoute(execution.routeDecision, extractConversationFeatures(normalized.messages, normalized.body), execution.modifiers, inferRouteHints(normalized)),
-      {
-        initialModelId: execution.initialModelId,
-        finalModelId: execution.finalModelId,
-        upstreamApi: execution.primaryApi,
-        providerPolicy: execution.providerPolicy,
-        retryPath: execution.retryPath,
-        verificationSkipped: execution.verificationSkipped,
-        transportFallbackOnly: execution.transportFallbackOnly,
-        reasoningContinuity: execution.reasoningContinuity,
-        cost: execution.cost
-      },
-      execution.verifier,
-      execution.toolPolicy
-    );
-    setRoutingHeaders(res, {
-      categoryId: execution.routeDecision.categoryId,
-      actionClass: execution.routeDecision.actionClass,
-      complexity: execution.classification.complexity,
-      adjustedComplexity: execution.routeDecision.adjustedComplexity,
-      lane: execution.routeDecision.lane,
-      initialModelId: execution.initialModelId,
-      finalModelId: execution.finalModelId,
-      routeLabel: execution.routeDecision.label,
-      upstreamApi: execution.primaryApi,
-      escalated: execution.escalated,
-      stickyApplied: execution.routeDecision.stickyApplied,
-      stickyReason: execution.routeDecision.stickyReason,
-      verificationSkipped: execution.verificationSkipped,
-      transportFallbackOnly: execution.transportFallbackOnly,
-      confidenceScore: execution.verifier?.score,
-      lowConfidence: execution.lowConfidence,
-      safetyGateTriggered: execution.routeDecision.safetyGateTriggered
-    });
-    if (normalized.stream) return execution.finalResult;
-    return finalizeExecutionBody(normalized, execution.primaryApi === "responses" ? execution.finalResult : execution.finalResult, metadata);
+  function executeChatRequest(req, res) {
+    return executeRequest(req, res, normalizeChatRequest(req.body || {}));
+  }
+
+  function executeResponsesRequest(req, res) {
+    return executeRequest(req, res, normalizeResponsesRequest(req.body || {}));
   }
 
   function serializeModelList(view = "virtual") {

@@ -26,6 +26,8 @@ npm run validate:models
 
 If you changed routing, manifests, safety behavior, or docs, say so clearly in the PR summary.
 
+Use `npm ci` before validation in a fresh checkout. Tests build isolated configs and local upstream fixtures; do not copy production secrets into a test worktree. See [engineering/verification.md](./engineering/verification.md) for focused suites, benchmarks, and production access requirements. Report a failing live catalog check with the missing IDs; do not remove the check or silently substitute a model.
+
 ## What to update together
 
 - If you change routing behavior, update:

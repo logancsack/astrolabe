@@ -1,7 +1,7 @@
 const { RAW_MODEL_MANIFEST } = require("../src/manifests");
 
 async function main() {
-  const response = await fetch("https://openrouter.ai/api/v1/models");
+  const response = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(15000) });
   if (!response.ok) {
     console.error(`Failed to fetch OpenRouter models: ${response.status} ${response.statusText}`);
     process.exit(1);

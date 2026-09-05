@@ -129,6 +129,8 @@ Policy rules worth knowing:
 - Dangerous remote-write, external-comms, credential, and destructive tool calls are capability-gated before Astrolabe returns them.
 - Active OpenClaw sessions can reuse the last successful in-lane model when sticky execution metadata is present.
 
+Transport fallback only retries errors classified as retryable (for example provider capacity or model availability failures). Permanent upstream errors, including authentication failures, stop immediately rather than trying a more expensive tier. Both APIs close the upstream SSE stream when the downstream client disconnects and terminate the downstream stream when its upstream fails.
+
 ## API surface
 
 Public endpoints:
@@ -252,6 +254,8 @@ Non-stream JSON responses also include inline Astrolabe metadata.
 
 ## Validation
 
+Install the locked dependencies with `npm ci`. Tests construct isolated configurations and local HTTP fixtures; they do not load `.env` or call paid model APIs.
+
 Run tests:
 
 ```bash
@@ -263,3 +267,5 @@ Validate the static manifest against OpenRouter’s current catalog:
 ```bash
 npm run validate:models
 ```
+
+`npm run check` runs both required checks. Focused suites, repeatable CPU benchmarks, production smoke checks, and worktree setup are documented in [Engineering verification](./engineering/verification.md). See the [September 2026 audit](./engineering/audits/2026-09-05.md) for measured results and remaining findings.

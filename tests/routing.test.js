@@ -1,34 +1,18 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-process.env.ASTROLABE_ROUTING_PROFILE = "balanced";
-process.env.ASTROLABE_ENABLE_SAFETY_GATE = "true";
+const { createConfig, normalizeRoutingProfile, normalizeHighStakesConfirmMode } = require("../src/config");
+const { createRuntime } = require("../src/runtime");
 
-const { internals } = require("../server");
-
-function loadServerFresh(env = {}) {
-  const modulePath = require.resolve("../server");
-  const cachedModule = require.cache[modulePath];
-  const previousEnv = {};
-  for (const [key, value] of Object.entries(env)) {
-    previousEnv[key] = process.env[key];
-    if (value == null) delete process.env[key];
-    else process.env[key] = value;
-  }
-  delete require.cache[modulePath];
-  let loaded;
-  try {
-    loaded = require("../server");
-  } finally {
-    for (const [key, value] of Object.entries(previousEnv)) {
-      if (value == null) delete process.env[key];
-      else process.env[key] = value;
-    }
-    delete require.cache[modulePath];
-    if (cachedModule) require.cache[modulePath] = cachedModule;
-  }
-  return loaded;
+function createTestRuntime(env = {}) {
+  return createRuntime(createConfig({
+    ASTROLABE_ROUTING_PROFILE: "balanced",
+    ASTROLABE_ENABLE_SAFETY_GATE: "true",
+    ...env
+  }));
 }
+
+const { internals } = createTestRuntime();
 
 test("safety gate detects high-stakes keywords", () => {
   const result = internals.detectSafetyGate("Please transfer funds and include the user's ssn.");
@@ -453,7 +437,7 @@ test("untrusted content requires approval for code execution", () => {
 });
 
 test("preview candidates appear only when config and request both allow them", () => {
-  const { internals: freshInternals } = loadServerFresh({
+  const { internals: freshInternals } = createTestRuntime({
     ASTROLABE_ALLOW_PREVIEW_MODELS: "true"
   });
   const route = freshInternals.resolveCategoryRoute("research", "standard");
@@ -485,10 +469,10 @@ test("forced route never escalates", () => {
 });
 
 test("mode normalizers still fall back to safe defaults on invalid values", () => {
-  assert.equal(internals.normalizeRoutingProfile("invalid"), "budget");
-  assert.equal(internals.normalizeRoutingProfile("quality"), "quality");
-  assert.equal(internals.normalizeHighStakesConfirmMode("invalid"), "prompt");
-  assert.equal(internals.normalizeHighStakesConfirmMode("strict"), "strict");
+  assert.equal(normalizeRoutingProfile("invalid"), "budget");
+  assert.equal(normalizeRoutingProfile("quality"), "quality");
+  assert.equal(normalizeHighStakesConfirmMode("invalid"), "prompt");
+  assert.equal(normalizeHighStakesConfirmMode("strict"), "strict");
 });
 
 test("high-stakes confirmation requires the exact token string", () => {
